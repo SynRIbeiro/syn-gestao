@@ -1,0 +1,12 @@
+services:
+  syn-gestao:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+    container_name: syn-gestao
+    restart: unless-stopped
+    ports:
+      - "8088:80"
