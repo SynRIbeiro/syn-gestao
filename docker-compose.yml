@@ -1,12 +1,11 @@
 services:
   syn-gestao:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
-        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
-    container_name: syn-gestao
-    restart: unless-stopped
+    image: ghcr.io/synribeiro/syn-gestao:latest
     ports:
       - "8088:80"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      update_config:
+        order: start-first
