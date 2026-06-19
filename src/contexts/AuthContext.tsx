@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import type { Session, User, AuthError } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 
-interface SignInResult {
+interface MagicLinkResult {
   error: AuthError | null
 }
 
@@ -11,7 +11,7 @@ interface AuthContextValue {
   user: User | null
   session: Session | null
   loading: boolean
-  signIn: (email: string, password: string) => Promise<SignInResult>
+  sendMagicLink: (email: string) => Promise<MagicLinkResult>
   signOut: () => Promise<void>
 }
 
@@ -27,14 +27,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Carrega sessão existente na inicialização
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session)
       setUser(data.session?.user ?? null)
       setLoading(false)
     })
 
-    // Escuta mudanças de estado de autenticação
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession)
       setUser(newSession?.user ?? null)
@@ -44,8 +42,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
     return () => subscription.unsubscribe()
   }, [])
 
-  const signIn = useCallback(async (email: string, password: string): Promise<SignInResult> => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+  const sendMagicLink = useCallback(async (email: string): Promise<MagicLinkResult> => {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: 'https://gestao.synribeiro.com.br/dashboard',
+        shouldCreateUser: false,
+      },
+    })
     return { error }
   }, [])
 
@@ -54,7 +58,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, sendMagicLink, signOut }}>
       {children}
     </AuthContext.Provider>
   )
