@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom'
 import type { Entrada, EntradaStatus } from '@/types'
 import type { DbEntrada } from '@/types/database'
 import { supabase } from '@/lib/supabase'
+import { EMPRESA_ID } from '@/lib/constants'
 import { formatBRL } from '@/utils/formatters'
 import { formatDateBR, daysUntil } from '@/utils/dateHelpers'
 import { SYN_COLORS } from '@/styles/theme'
@@ -78,6 +79,7 @@ export default function ContasReceber() {
       const { data: rawData, error } = await supabase
         .from('entradas')
         .select('*, clientes!cliente_id(nome), servicos!servico_id(nome), categorias!categoria_id(nome), contas_bancarias!conta_bancaria_id(nome)')
+        .eq('empresa_id', EMPRESA_ID)
         .in('status', ['pendente', 'atrasado'])
         .order('data_vencimento', { ascending: true })
       if (error) {

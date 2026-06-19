@@ -1,72 +1,44 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Row, Col, Card, Typography, Select, DatePicker, Button, Modal,
-  Table, Tag, Space, Tabs, Divider, Progress, Alert, Empty,
+  Table, Tag, Space, Tabs, Divider, Progress, Spin,
 } from 'antd'
 import {
   FilePdfOutlined, FileExcelOutlined, ArrowUpOutlined, ArrowDownOutlined,
   ExclamationCircleOutlined, CheckCircleOutlined, ClockCircleOutlined,
-  InfoCircleOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import {
-  ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip, Legend,
-  LineChart, Line, XAxis, YAxis, CartesianGrid,
-  BarChart, Bar,
+  ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar,
 } from 'recharts'
 import { formatBRL, formatCompactBRL } from '@/utils/formatters'
 import { formatDateBR, dayjs } from '@/utils/dateHelpers'
 import { SYN_COLORS } from '@/styles/theme'
-import type { EntradaStatus, SaidaStatus, ChartDataPoint, ServicoItem } from '@/types'
+import type { EntradaStatus, SaidaStatus } from '@/types'
+import { supabase } from '@/lib/supabase'
+import { EMPRESA_ID } from '@/lib/constants'
 
 const { Title, Text } = Typography
 const { RangePicker } = DatePicker
 
 const DESP_CORES = ['#7C3AED', '#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#6B7280']
 
-interface EntradaMock {
-  id: string
-  data: string
-  descricao: string
-  cliente: string
-  servico: string
-  categoria: string
-  valor: number
-  status: EntradaStatus
-  formaPagamento: string
+interface EntradaRow {
+  id: string; data: string; descricao: string; cliente: string
+  servico: string; categoria: string; valor: number; status: EntradaStatus; formaPagamento: string
 }
 
-interface SaidaMock {
-  id: string
-  vencimento: string
-  descricao: string
-  fornecedor: string
-  categoria: string
-  valor: number
-  status: SaidaStatus
+interface SaidaRow {
+  id: string; vencimento: string; descricao: string; fornecedor: string
+  categoria: string; valor: number; status: SaidaStatus
 }
 
-interface ClienteRentabilidade {
-  cliente: string
-  receita: number
-  custo: number
-  lucro: number
-  margemPct: number
-}
+interface ServicoRow { id: string; nome: string; categoria: string; valorVenda: number; custoEstimado: number }
 
-interface ServicoRentabilidade {
-  nome: string
-  categoria: string
-  receita: number
-  custo: number
-  lucro: number
-  margemPct: number
-}
-
-const entradas: EntradaMock[] = []
-const saidas: SaidaMock[] = []
-const servicos: ServicoItem[] = []
-const chartData: ChartDataPoint[] = []
+interface ClienteRentabilidade { cliente: string; receita: number; custo: number; lucro: number; margemPct: number }
+interface ServicoRentabilidade { nome: string; categoria: string; receita: number; custo: number; lucro: number; margemPct: number }
+interface ChartPoint { month: string; entradas: number; saidas: number; lucro: number }
 
 export default function Relatorios() {
   const [filterRange, setFilterRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null)
@@ -76,26 +48,67 @@ export default function Relatorios() {
   const [filterStatus, setFilterStatus] = useState('')
   const [exportModalOpen, setExportModalOpen] = useState(false)
   const [exportTipo, setExportTipo] = useState<'PDF' | 'Excel'>('PDF')
+  const [loading, setLoading] = useState(true)
 
-  const clientes = useMemo(() => [...new Set(entradas.map(e => e.cliente))].sort(), [])
-  const servicosList = useMemo(() => [...new Set(entradas.map(e => e.servico))].sort(), [])
-  const categorias = useMemo(() => [...new Set([
-    ...entradas.map(e => e.categoria),
-    ...saidas.map(s => s.categoria),
-  ])].sort(), [])
+  const [entradas, setEntradas] = useState<EntradaRow[]>([])
+  const [saidas, setSaidas] = useState<SaidaRow[]>([])
+  const [servicos, setServicos] = useState<ServicoRow[]>([])
 
-  const filteredEntradas = useMemo((): EntradaMock[] => {
+  useEffect(() => {
+    async function fetchAll() {
+      setLoading(true)
+      const [entradasRes, saidasRes, servicosRes] = await Promise.all([
+        supabase.from('entradas').select('id, descricao, valor, status, data_vencimento, forma_pagamento, clientes!cliente_id(nome), servicos!servico_id(nome), categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).order('data_vencimento', { ascending: false }),
+        supabase.from('saidas').select('id, descricao, valor, status, data_vencimento, fornecedor, categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).order('data_vencimento', { ascending: false }),
+        supabase.from('servicos').select('id, nome, categoria, valor_venda, custo_estimado').eq('empresa_id', EMPRESA_ID).eq('ativo', true),
+      ])
+
+      setEntradas(((entradasRes.data ?? []) as any[]).map(e => ({
+        id: e.id,
+        data: e.data_vencimento ?? '',
+        descricao: e.descricao,
+        cliente: (e.clientes as any)?.nome ?? '',
+        servico: (e.servicos as any)?.nome ?? '',
+        categoria: (e.categorias as any)?.nome ?? '',
+        valor: Number(e.valor),
+        status: e.status as EntradaStatus,
+        formaPagamento: e.forma_pagamento ?? '',
+      })))
+
+      setSaidas(((saidasRes.data ?? []) as any[]).map(s => ({
+        id: s.id,
+        vencimento: s.data_vencimento ?? '',
+        descricao: s.descricao,
+        fornecedor: s.fornecedor ?? '',
+        categoria: (s.categorias as any)?.nome ?? '',
+        valor: Number(s.valor),
+        status: s.status as SaidaStatus,
+      })))
+
+      setServicos(((servicosRes.data ?? []) as any[]).map(s => ({
+        id: s.id,
+        nome: s.nome,
+        categoria: s.categoria ?? '',
+        valorVenda: Number(s.valor_venda ?? 0),
+        custoEstimado: Number(s.custo_estimado ?? 0),
+      })))
+
+      setLoading(false)
+    }
+    fetchAll()
+  }, [])
+
+  const clientes = useMemo(() => [...new Set(entradas.map(e => e.cliente).filter(Boolean))].sort(), [entradas])
+  const servicosList = useMemo(() => [...new Set(entradas.map(e => e.servico).filter(Boolean))].sort(), [entradas])
+  const categorias = useMemo(() => [...new Set([...entradas.map(e => e.categoria), ...saidas.map(s => s.categoria)].filter(Boolean))].sort(), [entradas, saidas])
+
+  const filteredEntradas = useMemo((): EntradaRow[] => {
     return entradas.filter(e => {
       if (filterCliente && e.cliente !== filterCliente) return false
       if (filterServico && e.servico !== filterServico) return false
       if (filterCategoria && e.categoria !== filterCategoria) return false
       if (filterStatus) {
-        const statusMap: Record<string, EntradaStatus[]> = {
-          recebido: ['recebido'],
-          pago: ['recebido'],
-          pendente: ['pendente'],
-          atrasado: ['atrasado'],
-        }
+        const statusMap: Record<string, EntradaStatus[]> = { recebido: ['recebido'], pago: ['recebido'], pendente: ['pendente'], atrasado: ['atrasado'] }
         if (!statusMap[filterStatus]?.includes(e.status)) return false
       }
       if (filterRange) {
@@ -104,18 +117,13 @@ export default function Relatorios() {
       }
       return true
     })
-  }, [filterCliente, filterServico, filterCategoria, filterStatus, filterRange])
+  }, [entradas, filterCliente, filterServico, filterCategoria, filterStatus, filterRange])
 
-  const filteredSaidas = useMemo((): SaidaMock[] => {
+  const filteredSaidas = useMemo((): SaidaRow[] => {
     return saidas.filter(s => {
       if (filterCategoria && s.categoria !== filterCategoria) return false
       if (filterStatus) {
-        const statusMap: Record<string, SaidaStatus[]> = {
-          pago: ['pago'],
-          recebido: ['pago'],
-          pendente: ['pendente'],
-          atrasado: ['atrasado'],
-        }
+        const statusMap: Record<string, SaidaStatus[]> = { pago: ['pago'], recebido: ['pago'], pendente: ['pendente'], atrasado: ['atrasado'] }
         if (!statusMap[filterStatus]?.includes(s.status)) return false
       }
       if (filterRange) {
@@ -124,7 +132,7 @@ export default function Relatorios() {
       }
       return true
     })
-  }, [filterCategoria, filterStatus, filterRange])
+  }, [saidas, filterCategoria, filterStatus, filterRange])
 
   const totalEntradas = useMemo(() => filteredEntradas.reduce((s, e) => s + e.valor, 0), [filteredEntradas])
   const totalSaidas = useMemo(() => filteredSaidas.reduce((s, e) => s + e.valor, 0), [filteredSaidas])
@@ -132,99 +140,86 @@ export default function Relatorios() {
 
   const despesasPorCategoria = useMemo(() => {
     const map = new Map<string, number>()
-    filteredSaidas.forEach(s => map.set(s.categoria, (map.get(s.categoria) ?? 0) + s.valor))
-    return [...map.entries()]
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
+    filteredSaidas.forEach(s => map.set(s.categoria || 'Sem Categoria', (map.get(s.categoria || 'Sem Categoria') ?? 0) + s.valor))
+    return [...map.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
   }, [filteredSaidas])
 
   const receitaPorCliente = useMemo(() => {
     const map = new Map<string, number>()
-    filteredEntradas.forEach(e => map.set(e.cliente, (map.get(e.cliente) ?? 0) + e.valor))
-    return [...map.entries()]
-      .map(([name, value]) => ({ name: name.length > 22 ? name.slice(0, 22) + '…' : name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8)
+    filteredEntradas.forEach(e => { if (e.cliente) map.set(e.cliente, (map.get(e.cliente) ?? 0) + e.valor) })
+    return [...map.entries()].map(([name, value]) => ({ name: name.length > 22 ? name.slice(0, 22) + '…' : name, value })).sort((a, b) => b.value - a.value).slice(0, 8)
   }, [filteredEntradas])
 
   const lucroPorServico = useMemo((): ServicoRentabilidade[] => {
-    return servicos
-      .filter(sv => sv.status === 'ativo')
-      .map(sv => {
-        const receita = sv.valorVenda
-        const custo = sv.custoEstimado
-        const l = receita - custo
-        return {
-          nome: sv.nome.length > 28 ? sv.nome.slice(0, 28) + '…' : sv.nome,
-          categoria: sv.categoria,
-          receita,
-          custo,
-          lucro: l,
-          margemPct: receita > 0 ? (l / receita) * 100 : 0,
-        }
-      })
-      .sort((a, b) => b.lucro - a.lucro)
-  }, [])
+    return servicos.map(sv => {
+      const receita = sv.valorVenda
+      const custo = sv.custoEstimado
+      const l = receita - custo
+      return { nome: sv.nome.length > 28 ? sv.nome.slice(0, 28) + '…' : sv.nome, categoria: sv.categoria, receita, custo, lucro: l, margemPct: receita > 0 ? (l / receita) * 100 : 0 }
+    }).sort((a, b) => b.lucro - a.lucro)
+  }, [servicos])
 
   const rentabilidadePorCliente = useMemo((): ClienteRentabilidade[] => {
     const map = new Map<string, number>()
-    filteredEntradas.forEach(e => map.set(e.cliente, (map.get(e.cliente) ?? 0) + e.valor))
-    return [...map.entries()]
-      .map(([cliente, receita]) => {
-        const custo = receita * 0.3
-        const l = receita - custo
-        return { cliente, receita, custo, lucro: l, margemPct: receita > 0 ? (l / receita) * 100 : 0 }
-      })
-      .sort((a, b) => b.receita - a.receita)
+    filteredEntradas.forEach(e => { if (e.cliente) map.set(e.cliente, (map.get(e.cliente) ?? 0) + e.valor) })
+    return [...map.entries()].map(([cliente, receita]) => {
+      const custo = receita * 0.3
+      const l = receita - custo
+      return { cliente, receita, custo, lucro: l, margemPct: receita > 0 ? (l / receita) * 100 : 0 }
+    }).sort((a, b) => b.receita - a.receita)
   }, [filteredEntradas])
 
-  function openExport(tipo: 'PDF' | 'Excel') {
-    setExportTipo(tipo)
-    setExportModalOpen(true)
-  }
+  const chartData = useMemo((): ChartPoint[] => {
+    const now = dayjs()
+    return Array.from({ length: 6 }, (_, i) => {
+      const m = now.subtract(5 - i, 'month')
+      const inicio = m.startOf('month').format('YYYY-MM-DD')
+      const fim = m.endOf('month').format('YYYY-MM-DD')
+      const label = m.locale('pt-br').format('MMM/YY').replace(/^\w/, c => c.toUpperCase())
+      const entVal = entradas.filter(e => e.data >= inicio && e.data <= fim).reduce((s, e) => s + e.valor, 0)
+      const saiVal = saidas.filter(s => s.vencimento >= inicio && s.vencimento <= fim).reduce((s, e) => s + e.valor, 0)
+      return { month: label, entradas: entVal, saidas: saiVal, lucro: entVal - saiVal }
+    })
+  }, [entradas, saidas])
 
   const statusEntradaConfig: Record<EntradaStatus, { color: string; label: string; icon: React.ReactNode }> = {
     recebido: { color: 'success', label: 'Recebido', icon: <CheckCircleOutlined /> },
     pendente: { color: 'warning', label: 'Pendente', icon: <ClockCircleOutlined /> },
     atrasado: { color: 'error', label: 'Atrasado', icon: <ExclamationCircleOutlined /> },
   }
-
   const statusSaidaConfig: Record<SaidaStatus, { color: string; label: string }> = {
     pago: { color: 'success', label: 'Pago' },
     pendente: { color: 'warning', label: 'Pendente' },
     atrasado: { color: 'error', label: 'Atrasado' },
   }
 
-  const colsEntrada: ColumnsType<EntradaMock> = [
+  const colsEntrada: ColumnsType<EntradaRow> = [
     { title: 'Data', dataIndex: 'data', key: 'data', width: 100, render: (v: string) => formatDateBR(v) },
     { title: 'Descrição', dataIndex: 'descricao', key: 'descricao', render: (v: string) => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Cliente', dataIndex: 'cliente', key: 'cliente' },
-    { title: 'Categoria', dataIndex: 'categoria', key: 'categoria', render: (v: string) => <Tag color="blue" style={{ borderRadius: 6 }}>{v}</Tag> },
+    { title: 'Categoria', dataIndex: 'categoria', key: 'categoria', render: (v: string) => <Tag color="blue" style={{ borderRadius: 6 }}>{v || '—'}</Tag> },
     { title: 'Valor', dataIndex: 'valor', key: 'valor', align: 'right', render: (v: number) => <Text style={{ fontWeight: 600, color: SYN_COLORS.success }}>{formatBRL(v)}</Text> },
     { title: 'Status', dataIndex: 'status', key: 'status', render: (v: EntradaStatus) => <Tag color={statusEntradaConfig[v].color} style={{ borderRadius: 6 }}>{statusEntradaConfig[v].label}</Tag> },
   ]
 
-  const colsSaida: ColumnsType<SaidaMock> = [
+  const colsSaida: ColumnsType<SaidaRow> = [
     { title: 'Vencimento', dataIndex: 'vencimento', key: 'vencimento', width: 100, render: (v: string) => formatDateBR(v) },
     { title: 'Descrição', dataIndex: 'descricao', key: 'descricao', render: (v: string) => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Fornecedor', dataIndex: 'fornecedor', key: 'fornecedor' },
-    { title: 'Categoria', dataIndex: 'categoria', key: 'categoria', render: (v: string) => <Tag color="default" style={{ borderRadius: 6 }}>{v}</Tag> },
+    { title: 'Categoria', dataIndex: 'categoria', key: 'categoria', render: (v: string) => <Tag color="default" style={{ borderRadius: 6 }}>{v || '—'}</Tag> },
     { title: 'Valor', dataIndex: 'valor', key: 'valor', align: 'right', render: (v: number) => <Text style={{ fontWeight: 600, color: SYN_COLORS.danger }}>{formatBRL(v)}</Text> },
     { title: 'Status', dataIndex: 'status', key: 'status', render: (v: SaidaStatus) => <Tag color={statusSaidaConfig[v].color} style={{ borderRadius: 6 }}>{statusSaidaConfig[v].label}</Tag> },
   ]
 
   const emptyState = (mensagem: string) => (
-    <Empty
-      image={Empty.PRESENTED_IMAGE_SIMPLE}
-      description={<Text type="secondary" style={{ fontSize: 13 }}>{mensagem}</Text>}
-      style={{ padding: '24px 0' }}
-    />
+    <div style={{ textAlign: 'center', padding: '32px 0' }}>
+      <Text type="secondary" style={{ fontSize: 13 }}>{mensagem}</Text>
+    </div>
   )
 
   const tabItems = [
     {
-      key: 'entradas',
-      label: 'Entradas',
+      key: 'entradas', label: 'Entradas',
       children: (
         <Card style={{ borderRadius: 12 }}>
           <Row gutter={16} style={{ marginBottom: 16 }}>
@@ -233,16 +228,12 @@ export default function Relatorios() {
             <Col><Card size="small" style={{ borderRadius: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Pendente</Text><br /><Text style={{ fontSize: 16, fontWeight: 700, color: SYN_COLORS.warning }}>{formatBRL(filteredEntradas.filter(e => e.status === 'pendente').reduce((s, e) => s + e.valor, 0))}</Text></Card></Col>
             <Col><Card size="small" style={{ borderRadius: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Atrasado</Text><br /><Text style={{ fontSize: 16, fontWeight: 700, color: SYN_COLORS.danger }}>{formatBRL(filteredEntradas.filter(e => e.status === 'atrasado').reduce((s, e) => s + e.valor, 0))}</Text></Card></Col>
           </Row>
-          {filteredEntradas.length === 0
-            ? emptyState('Nenhuma entrada registrada. Cadastre entradas para visualizar o relatório.')
-            : <Table dataSource={filteredEntradas} columns={colsEntrada} rowKey="id" size="small" pagination={{ pageSize: 8 }} scroll={{ x: 800 }} />
-          }
+          {filteredEntradas.length === 0 ? emptyState('Nenhuma entrada registrada.') : <Table dataSource={filteredEntradas} columns={colsEntrada} rowKey="id" size="small" pagination={{ pageSize: 8 }} scroll={{ x: 800 }} />}
         </Card>
       ),
     },
     {
-      key: 'saidas',
-      label: 'Saídas',
+      key: 'saidas', label: 'Saídas',
       children: (
         <Card style={{ borderRadius: 12 }}>
           <Row gutter={16} style={{ marginBottom: 16 }}>
@@ -251,16 +242,12 @@ export default function Relatorios() {
             <Col><Card size="small" style={{ borderRadius: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Pendente</Text><br /><Text style={{ fontSize: 16, fontWeight: 700, color: SYN_COLORS.warning }}>{formatBRL(filteredSaidas.filter(s => s.status === 'pendente').reduce((s, e) => s + e.valor, 0))}</Text></Card></Col>
             <Col><Card size="small" style={{ borderRadius: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Atrasado</Text><br /><Text style={{ fontSize: 16, fontWeight: 700, color: SYN_COLORS.danger }}>{formatBRL(filteredSaidas.filter(s => s.status === 'atrasado').reduce((s, e) => s + e.valor, 0))}</Text></Card></Col>
           </Row>
-          {filteredSaidas.length === 0
-            ? emptyState('Nenhuma saída registrada. Cadastre saídas para visualizar o relatório.')
-            : <Table dataSource={filteredSaidas} columns={colsSaida} rowKey="id" size="small" pagination={{ pageSize: 8 }} scroll={{ x: 800 }} />
-          }
+          {filteredSaidas.length === 0 ? emptyState('Nenhuma saída registrada.') : <Table dataSource={filteredSaidas} columns={colsSaida} rowKey="id" size="small" pagination={{ pageSize: 8 }} scroll={{ x: 800 }} />}
         </Card>
       ),
     },
     {
-      key: 'lucro-periodo',
-      label: 'Lucro por Período',
+      key: 'lucro-periodo', label: 'Lucro por Período',
       children: (
         <Card style={{ borderRadius: 12 }}>
           <Row gutter={16} style={{ marginBottom: 16 }}>
@@ -268,102 +255,63 @@ export default function Relatorios() {
             <Col><Card size="small" style={{ borderRadius: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Custo Total</Text><br /><Text style={{ fontSize: 16, fontWeight: 700, color: SYN_COLORS.danger }}>{formatBRL(totalSaidas)}</Text></Card></Col>
             <Col><Card size="small" style={{ borderRadius: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Lucro</Text><br /><Text style={{ fontSize: 16, fontWeight: 700, color: lucro >= 0 ? SYN_COLORS.primary : SYN_COLORS.danger }}>{formatBRL(lucro)}</Text></Card></Col>
           </Row>
-          {chartData.length === 0
-            ? emptyState('Nenhuma movimentação cadastrada para visualizar a evolução do lucro.')
-            : (
-              <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
-                  <XAxis dataKey="month" tick={{ fontSize: 12, fill: SYN_COLORS.textSecondary }} axisLine={false} tickLine={false} />
-                  <YAxis tickFormatter={formatCompactBRL} tick={{ fontSize: 12, fill: SYN_COLORS.textSecondary }} axisLine={false} tickLine={false} width={75} />
-                  <ReTooltip formatter={(v) => [formatBRL(Number(v))]} contentStyle={{ borderRadius: 8, border: '1px solid #E5E7EB' }} />
-                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} formatter={(v: string) => ({ entradas: 'Entradas', saidas: 'Saídas', lucro: 'Lucro' }[v] ?? v)} />
-                  <Line type="monotone" dataKey="entradas" stroke={SYN_COLORS.success} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                  <Line type="monotone" dataKey="saidas" stroke={SYN_COLORS.danger} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                  <Line type="monotone" dataKey="lucro" stroke={SYN_COLORS.primary} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            )
-          }
+          {chartData.every(d => d.entradas === 0 && d.saidas === 0) ? emptyState('Nenhuma movimentação cadastrada para visualizar a evolução do lucro.') : (
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
+                <XAxis dataKey="month" tick={{ fontSize: 12, fill: SYN_COLORS.textSecondary }} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={formatCompactBRL} tick={{ fontSize: 12, fill: SYN_COLORS.textSecondary }} axisLine={false} tickLine={false} width={75} />
+                <ReTooltip formatter={(v) => [formatBRL(Number(v))]} contentStyle={{ borderRadius: 8, border: '1px solid #E5E7EB' }} />
+                <Line type="monotone" dataKey="entradas" stroke={SYN_COLORS.success} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} name="Entradas" />
+                <Line type="monotone" dataKey="saidas" stroke={SYN_COLORS.danger} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} name="Saídas" />
+                <Line type="monotone" dataKey="lucro" stroke={SYN_COLORS.primary} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} name="Lucro" />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </Card>
       ),
     },
     {
-      key: 'rent-cliente',
-      label: 'Rent. por Cliente',
+      key: 'rent-cliente', label: 'Rent. por Cliente',
       children: (
         <Card style={{ borderRadius: 12 }}>
-          {rentabilidadePorCliente.length === 0
-            ? emptyState('Nenhum dado de clientes disponível. Cadastre entradas com clientes para visualizar a rentabilidade.')
-            : (
-              <Table
-                dataSource={rentabilidadePorCliente}
-                rowKey="cliente"
-                size="small"
-                pagination={{ pageSize: 10 }}
-                columns={[
-                  { title: 'Cliente', dataIndex: 'cliente', key: 'cliente', render: (v: string) => <Text strong>{v}</Text> },
-                  { title: 'Receita', dataIndex: 'receita', key: 'receita', align: 'right', render: (v: number) => <Text style={{ color: SYN_COLORS.success }}>{formatBRL(v)}</Text> },
-                  { title: 'Custo Est.', dataIndex: 'custo', key: 'custo', align: 'right', render: (v: number) => <Text style={{ color: SYN_COLORS.danger }}>{formatBRL(v)}</Text> },
-                  { title: 'Lucro', dataIndex: 'lucro', key: 'lucro', align: 'right', render: (v: number) => <Text style={{ fontWeight: 600, color: v >= 0 ? SYN_COLORS.success : SYN_COLORS.danger }}>{formatBRL(v)}</Text> },
-                  {
-                    title: 'Margem',
-                    dataIndex: 'margemPct',
-                    key: 'margemPct',
-                    render: (v: number) => (
-                      <Space>
-                        <Progress percent={Math.min(Math.max(v, 0), 100)} size="small" strokeColor={v >= 50 ? SYN_COLORS.success : v >= 30 ? SYN_COLORS.warning : SYN_COLORS.danger} style={{ width: 80 }} showInfo={false} />
-                        <Text style={{ color: v >= 50 ? SYN_COLORS.success : v >= 30 ? SYN_COLORS.warning : SYN_COLORS.danger }}>{v.toFixed(1).replace('.', ',')}%</Text>
-                      </Space>
-                    ),
-                  },
-                ] as ColumnsType<ClienteRentabilidade>}
-              />
-            )
-          }
+          {rentabilidadePorCliente.length === 0 ? emptyState('Nenhum dado de clientes disponível.') : (
+            <Table
+              dataSource={rentabilidadePorCliente} rowKey="cliente" size="small" pagination={{ pageSize: 10 }}
+              columns={[
+                { title: 'Cliente', dataIndex: 'cliente', key: 'cliente', render: (v: string) => <Text strong>{v}</Text> },
+                { title: 'Receita', dataIndex: 'receita', key: 'receita', align: 'right', render: (v: number) => <Text style={{ color: SYN_COLORS.success }}>{formatBRL(v)}</Text> },
+                { title: 'Custo Est.', dataIndex: 'custo', key: 'custo', align: 'right', render: (v: number) => <Text style={{ color: SYN_COLORS.danger }}>{formatBRL(v)}</Text> },
+                { title: 'Lucro', dataIndex: 'lucro', key: 'lucro', align: 'right', render: (v: number) => <Text style={{ fontWeight: 600, color: v >= 0 ? SYN_COLORS.success : SYN_COLORS.danger }}>{formatBRL(v)}</Text> },
+                { title: 'Margem', dataIndex: 'margemPct', key: 'margemPct', render: (v: number) => (<Space><Progress percent={Math.min(Math.max(v, 0), 100)} size="small" strokeColor={v >= 50 ? SYN_COLORS.success : v >= 30 ? SYN_COLORS.warning : SYN_COLORS.danger} style={{ width: 80 }} showInfo={false} /><Text style={{ color: v >= 50 ? SYN_COLORS.success : v >= 30 ? SYN_COLORS.warning : SYN_COLORS.danger }}>{v.toFixed(1).replace('.', ',')}%</Text></Space>) },
+              ] as ColumnsType<ClienteRentabilidade>}
+            />
+          )}
         </Card>
       ),
     },
     {
-      key: 'rent-servico',
-      label: 'Rent. por Serviço',
+      key: 'rent-servico', label: 'Rent. por Serviço',
       children: (
         <Card style={{ borderRadius: 12 }}>
-          {lucroPorServico.length === 0
-            ? emptyState('Nenhum serviço cadastrado. Cadastre serviços ativos para visualizar a rentabilidade.')
-            : (
-              <Table
-                dataSource={lucroPorServico}
-                rowKey="nome"
-                size="small"
-                pagination={{ pageSize: 10 }}
-                columns={[
-                  { title: 'Serviço', dataIndex: 'nome', key: 'nome', render: (v: string) => <Text strong>{v}</Text> },
-                  { title: 'Categoria', dataIndex: 'categoria', key: 'categoria', render: (v: string) => <Tag color="purple" style={{ borderRadius: 6 }}>{v}</Tag> },
-                  { title: 'Preço Venda', dataIndex: 'receita', key: 'receita', align: 'right', render: (v: number) => formatBRL(v) },
-                  { title: 'Custo Est.', dataIndex: 'custo', key: 'custo', align: 'right', render: (v: number) => <Text style={{ color: SYN_COLORS.danger }}>{formatBRL(v)}</Text> },
-                  { title: 'Lucro', dataIndex: 'lucro', key: 'lucro', align: 'right', render: (v: number) => <Text style={{ fontWeight: 600, color: v >= 0 ? SYN_COLORS.success : SYN_COLORS.danger }}>{formatBRL(v)}</Text> },
-                  {
-                    title: 'Margem',
-                    dataIndex: 'margemPct',
-                    key: 'margemPct',
-                    render: (v: number) => (
-                      <Space>
-                        <Progress percent={Math.min(Math.max(v, 0), 100)} size="small" strokeColor={v >= 50 ? SYN_COLORS.success : v >= 30 ? SYN_COLORS.warning : SYN_COLORS.danger} style={{ width: 80 }} showInfo={false} />
-                        <Text style={{ color: v >= 50 ? SYN_COLORS.success : v >= 30 ? SYN_COLORS.warning : SYN_COLORS.danger }}>{v.toFixed(1).replace('.', ',')}%</Text>
-                      </Space>
-                    ),
-                  },
-                ] as ColumnsType<ServicoRentabilidade>}
-              />
-            )
-          }
+          {lucroPorServico.length === 0 ? emptyState('Nenhum serviço cadastrado.') : (
+            <Table
+              dataSource={lucroPorServico} rowKey="nome" size="small" pagination={{ pageSize: 10 }}
+              columns={[
+                { title: 'Serviço', dataIndex: 'nome', key: 'nome', render: (v: string) => <Text strong>{v}</Text> },
+                { title: 'Categoria', dataIndex: 'categoria', key: 'categoria', render: (v: string) => <Tag color="purple" style={{ borderRadius: 6 }}>{v}</Tag> },
+                { title: 'Preço Venda', dataIndex: 'receita', key: 'receita', align: 'right', render: (v: number) => formatBRL(v) },
+                { title: 'Custo Est.', dataIndex: 'custo', key: 'custo', align: 'right', render: (v: number) => <Text style={{ color: SYN_COLORS.danger }}>{formatBRL(v)}</Text> },
+                { title: 'Lucro', dataIndex: 'lucro', key: 'lucro', align: 'right', render: (v: number) => <Text style={{ fontWeight: 600, color: v >= 0 ? SYN_COLORS.success : SYN_COLORS.danger }}>{formatBRL(v)}</Text> },
+                { title: 'Margem', dataIndex: 'margemPct', key: 'margemPct', render: (v: number) => (<Space><Progress percent={Math.min(Math.max(v, 0), 100)} size="small" strokeColor={v >= 50 ? SYN_COLORS.success : v >= 30 ? SYN_COLORS.warning : SYN_COLORS.danger} style={{ width: 80 }} showInfo={false} /><Text style={{ color: v >= 50 ? SYN_COLORS.success : v >= 30 ? SYN_COLORS.warning : SYN_COLORS.danger }}>{v.toFixed(1).replace('.', ',')}%</Text></Space>) },
+              ] as ColumnsType<ServicoRentabilidade>}
+            />
+          )}
         </Card>
       ),
     },
     {
-      key: 'inadimplencia',
-      label: 'Inadimplência',
+      key: 'inadimplencia', label: 'Inadimplência',
       children: (
         <Card style={{ borderRadius: 12 }}>
           {(() => {
@@ -375,10 +323,7 @@ export default function Relatorios() {
                   <Col><Card size="small" style={{ borderRadius: 8, borderColor: SYN_COLORS.danger }}><Text type="secondary" style={{ fontSize: 12 }}>Total Inadimplente</Text><br /><Text style={{ fontSize: 16, fontWeight: 700, color: SYN_COLORS.danger }}>{formatBRL(total)}</Text></Card></Col>
                   <Col><Card size="small" style={{ borderRadius: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Qtd. Registros</Text><br /><Text style={{ fontSize: 16, fontWeight: 700, color: SYN_COLORS.danger }}>{inadimplentes.length}</Text></Card></Col>
                 </Row>
-                {inadimplentes.length === 0
-                  ? emptyState('Nenhuma inadimplência registrada.')
-                  : <Table dataSource={inadimplentes} columns={colsEntrada} rowKey="id" size="small" pagination={{ pageSize: 8 }} scroll={{ x: 800 }} />
-                }
+                {inadimplentes.length === 0 ? emptyState('Nenhuma inadimplência registrada.') : <Table dataSource={inadimplentes} columns={colsEntrada} rowKey="id" size="small" pagination={{ pageSize: 8 }} scroll={{ x: 800 }} />}
               </>
             )
           })()}
@@ -386,8 +331,7 @@ export default function Relatorios() {
       ),
     },
     {
-      key: 'contas-pagar',
-      label: 'Contas a Pagar',
+      key: 'contas-pagar', label: 'Contas a Pagar',
       children: (
         <Card style={{ borderRadius: 12 }}>
           {(() => {
@@ -399,10 +343,7 @@ export default function Relatorios() {
                   <Col><Card size="small" style={{ borderRadius: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Total Pendente</Text><br /><Text style={{ fontSize: 16, fontWeight: 700, color: SYN_COLORS.warning }}>{formatBRL(total)}</Text></Card></Col>
                   <Col><Card size="small" style={{ borderRadius: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Qtd. Registros</Text><br /><Text style={{ fontSize: 16, fontWeight: 700 }}>{pendentes.length}</Text></Card></Col>
                 </Row>
-                {pendentes.length === 0
-                  ? emptyState('Nenhuma conta a pagar registrada.')
-                  : <Table dataSource={pendentes} columns={colsSaida} rowKey="id" size="small" pagination={{ pageSize: 8 }} scroll={{ x: 800 }} />
-                }
+                {pendentes.length === 0 ? emptyState('Nenhuma conta a pagar registrada.') : <Table dataSource={pendentes} columns={colsSaida} rowKey="id" size="small" pagination={{ pageSize: 8 }} scroll={{ x: 800 }} />}
               </>
             )
           })()}
@@ -410,8 +351,7 @@ export default function Relatorios() {
       ),
     },
     {
-      key: 'contas-receber',
-      label: 'Contas a Receber',
+      key: 'contas-receber', label: 'Contas a Receber',
       children: (
         <Card style={{ borderRadius: 12 }}>
           {(() => {
@@ -423,98 +363,25 @@ export default function Relatorios() {
                   <Col><Card size="small" style={{ borderRadius: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Total a Receber</Text><br /><Text style={{ fontSize: 16, fontWeight: 700, color: SYN_COLORS.warning }}>{formatBRL(total)}</Text></Card></Col>
                   <Col><Card size="small" style={{ borderRadius: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Qtd. Registros</Text><br /><Text style={{ fontSize: 16, fontWeight: 700 }}>{pendentes.length}</Text></Card></Col>
                 </Row>
-                {pendentes.length === 0
-                  ? emptyState('Nenhuma conta a receber registrada.')
-                  : <Table dataSource={pendentes} columns={colsEntrada} rowKey="id" size="small" pagination={{ pageSize: 8 }} scroll={{ x: 800 }} />
-                }
+                {pendentes.length === 0 ? emptyState('Nenhuma conta a receber registrada.') : <Table dataSource={pendentes} columns={colsEntrada} rowKey="id" size="small" pagination={{ pageSize: 8 }} scroll={{ x: 800 }} />}
               </>
             )
           })()}
         </Card>
       ),
     },
-    {
-      key: 'dre-resumo',
-      label: 'DRE',
-      children: (
-        <Card style={{ borderRadius: 12 }}>
-          <div style={{ textAlign: 'center', padding: '24px 0' }}>
-            <Text type="secondary" style={{ fontSize: 14 }}>
-              Visualização resumida da DRE para o período filtrado
-            </Text>
-            <div style={{ marginTop: 24 }}>
-              {[
-                { label: 'Receita Bruta (estimada)', value: totalEntradas / 0.9 },
-                { label: 'Deduções e Impostos (~10%)', value: (totalEntradas / 0.9) * 0.1, neg: true },
-                { label: 'Receita Líquida', value: totalEntradas, bold: true },
-                { label: 'Custo dos Serviços (~30%)', value: totalEntradas * 0.3, neg: true },
-                { label: 'Lucro Bruto', value: totalEntradas * 0.7, bold: true },
-                { label: 'Despesas Operacionais', value: totalSaidas - totalEntradas * 0.3 > 0 ? totalSaidas - totalEntradas * 0.3 : totalSaidas * 0.6, neg: true },
-                { label: 'Resultado Operacional / Lucro Líquido', value: lucro, bold: true, highlight: true },
-              ].map(item => (
-                <div key={item.label} style={{
-                  display: 'flex', justifyContent: 'space-between',
-                  padding: '8px 24px',
-                  background: item.highlight ? (lucro >= 0 ? '#ECFDF5' : '#FEF2F2') : 'transparent',
-                  borderRadius: item.highlight ? 8 : 0,
-                  borderBottom: item.highlight ? 'none' : `1px solid ${SYN_COLORS.border}`,
-                  marginBottom: 2,
-                }}>
-                  <Text style={{ fontWeight: item.bold ? 700 : 400 }}>{item.label}</Text>
-                  <Text style={{
-                    fontWeight: item.bold ? 700 : 400,
-                    color: item.highlight ? (lucro >= 0 ? SYN_COLORS.success : SYN_COLORS.danger) : item.neg ? SYN_COLORS.danger : SYN_COLORS.textPrimary,
-                  }}>
-                    {item.neg ? `(${formatBRL(Math.abs(item.value))})` : formatBRL(item.value)}
-                  </Text>
-                </div>
-              ))}
-            </div>
-            <div style={{ marginTop: 16 }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>Para a DRE completa com comparativos e gráficos, acesse a página <strong>DRE</strong> no menu.</Text>
-            </div>
-          </div>
-        </Card>
-      ),
-    },
-    {
-      key: 'roi-resumo',
-      label: 'ROI',
-      children: (
-        <Card style={{ borderRadius: 12 }}>
-          <div style={{ textAlign: 'center', padding: '24px 0' }}>
-            <Text type="secondary">Para análise completa de ROI por investimento, gráficos e gestão de campanhas, acesse a página <strong>ROI</strong> no menu.</Text>
-          </div>
-        </Card>
-      ),
-    },
-    {
-      key: 'fluxo-resumo',
-      label: 'Fluxo de Caixa',
-      children: (
-        <Card style={{ borderRadius: 12 }}>
-          <div style={{ textAlign: 'center', padding: '24px 0' }}>
-            <Text type="secondary">Para controle e projeção de fluxo de caixa mensal com gráficos de saldo, acesse a página <strong>Fluxo de Caixa</strong> no menu.</Text>
-          </div>
-        </Card>
-      ),
-    },
-    {
-      key: 'balanco-resumo',
-      label: 'Balanço',
-      children: (
-        <Card style={{ borderRadius: 12 }}>
-          <div style={{ textAlign: 'center', padding: '24px 0' }}>
-            <Text type="secondary">Para o balanço financeiro completo com ativos, passivos e patrimônio líquido, acesse a página <strong>Balanço Financeiro</strong> no menu.</Text>
-          </div>
-        </Card>
-      ),
-    },
   ]
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
+        <Spin size="large" />
+      </div>
+    )
+  }
 
   return (
     <div style={{ padding: 24 }}>
-      {/* Header */}
       <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
         <Col>
           <Title level={3} style={{ margin: 0, fontWeight: 700 }}>Relatórios</Title>
@@ -522,93 +389,35 @@ export default function Relatorios() {
         </Col>
         <Col>
           <Space>
-            <Button
-              icon={<FilePdfOutlined />}
-              style={{ borderColor: SYN_COLORS.danger, color: SYN_COLORS.danger }}
-              onClick={() => openExport('PDF')}
-            >
-              Exportar PDF
-            </Button>
-            <Button
-              icon={<FileExcelOutlined />}
-              style={{ borderColor: SYN_COLORS.success, color: SYN_COLORS.success }}
-              onClick={() => openExport('Excel')}
-            >
-              Exportar Excel
-            </Button>
+            <Button icon={<FilePdfOutlined />} style={{ borderColor: SYN_COLORS.danger, color: SYN_COLORS.danger }} onClick={() => { setExportTipo('PDF'); setExportModalOpen(true) }}>Exportar PDF</Button>
+            <Button icon={<FileExcelOutlined />} style={{ borderColor: SYN_COLORS.success, color: SYN_COLORS.success }} onClick={() => { setExportTipo('Excel'); setExportModalOpen(true) }}>Exportar Excel</Button>
           </Space>
         </Col>
       </Row>
-
-      {/* Banner informativo */}
-      <Alert
-        icon={<InfoCircleOutlined />}
-        message="Nenhum dado cadastrado"
-        description="Os relatórios serão preenchidos automaticamente conforme você cadastrar entradas, saídas, clientes e serviços."
-        type="info"
-        showIcon
-        style={{ marginBottom: 24, borderRadius: 10 }}
-      />
 
       {/* Filtros */}
       <Card style={{ marginBottom: 24, borderRadius: 12 }} styles={{ body: { padding: '14px 20px' } }}>
         <Row gutter={[16, 8]} align="bottom" wrap>
           <Col>
             <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Período</Text>
-            <RangePicker
-              format="DD/MM/YYYY"
-              onChange={v => setFilterRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)}
-              placeholder={['Data inicial', 'Data final']}
-            />
+            <RangePicker format="DD/MM/YYYY" onChange={v => setFilterRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)} placeholder={['Data inicial', 'Data final']} />
           </Col>
           <Col>
             <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Cliente</Text>
-            <Select
-              allowClear
-              showSearch
-              placeholder="Todos"
-              style={{ width: 200 }}
-              value={filterCliente || undefined}
-              onChange={v => setFilterCliente(v ?? '')}
-              options={clientes.map(c => ({ label: c, value: c }))}
-            />
+            <Select allowClear showSearch placeholder="Todos" style={{ width: 200 }} value={filterCliente || undefined} onChange={v => setFilterCliente(v ?? '')} options={clientes.map(c => ({ label: c, value: c }))} />
           </Col>
           <Col>
             <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Serviço</Text>
-            <Select
-              allowClear
-              showSearch
-              placeholder="Todos"
-              style={{ width: 220 }}
-              value={filterServico || undefined}
-              onChange={v => setFilterServico(v ?? '')}
-              options={servicosList.map(s => ({ label: s, value: s }))}
-            />
+            <Select allowClear showSearch placeholder="Todos" style={{ width: 220 }} value={filterServico || undefined} onChange={v => setFilterServico(v ?? '')} options={servicosList.map(s => ({ label: s, value: s }))} />
           </Col>
           <Col>
             <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Categoria</Text>
-            <Select
-              allowClear
-              placeholder="Todas"
-              style={{ width: 180 }}
-              value={filterCategoria || undefined}
-              onChange={v => setFilterCategoria(v ?? '')}
-              options={categorias.map(c => ({ label: c, value: c }))}
-            />
+            <Select allowClear placeholder="Todas" style={{ width: 180 }} value={filterCategoria || undefined} onChange={v => setFilterCategoria(v ?? '')} options={categorias.map(c => ({ label: c, value: c }))} />
           </Col>
           <Col>
             <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Status</Text>
-            <Select
-              allowClear
-              placeholder="Todos"
-              style={{ width: 140 }}
-              value={filterStatus || undefined}
-              onChange={v => setFilterStatus(v ?? '')}
-              options={[
-                { label: 'Recebido/Pago', value: 'recebido' },
-                { label: 'Pendente', value: 'pendente' },
-                { label: 'Atrasado', value: 'atrasado' },
-              ]}
+            <Select allowClear placeholder="Todos" style={{ width: 140 }} value={filterStatus || undefined} onChange={v => setFilterStatus(v ?? '')}
+              options={[{ label: 'Recebido/Pago', value: 'recebido' }, { label: 'Pendente', value: 'pendente' }, { label: 'Atrasado', value: 'atrasado' }]}
             />
           </Col>
         </Row>
@@ -651,10 +460,7 @@ export default function Relatorios() {
                 <div style={{ marginTop: 8 }}>
                   {despesasPorCategoria.slice(0, 5).map((item, i) => (
                     <div key={item.name} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
-                      <Space size={6}>
-                        <div style={{ width: 8, height: 8, borderRadius: 2, background: DESP_CORES[i % DESP_CORES.length] }} />
-                        <Text style={{ fontSize: 11 }}>{item.name}</Text>
-                      </Space>
+                      <Space size={6}><div style={{ width: 8, height: 8, borderRadius: 2, background: DESP_CORES[i % DESP_CORES.length] }} /><Text style={{ fontSize: 11 }}>{item.name}</Text></Space>
                       <Text style={{ fontSize: 11, fontWeight: 500 }}>{formatBRL(item.value)}</Text>
                     </div>
                   ))}
@@ -698,17 +504,10 @@ export default function Relatorios() {
       </Row>
 
       {/* Evolução Financeira */}
-      <Card
-        title={<Title level={5} style={{ margin: 0 }}>Evolução Financeira Mensal</Title>}
-        style={{ marginBottom: 24, borderRadius: 12 }}
-      >
-        {chartData.length === 0 ? (
+      <Card title={<Title level={5} style={{ margin: 0 }}>Evolução Financeira Mensal</Title>} style={{ marginBottom: 24, borderRadius: 12 }}>
+        {chartData.every(d => d.entradas === 0 && d.saidas === 0) ? (
           <div style={{ textAlign: 'center', padding: '32px 0' }}>
-            <Text type="secondary" style={{ fontSize: 13 }}>
-              Nenhuma movimentação cadastrada.
-              <br />
-              Cadastre entradas e saídas para visualizar os gráficos.
-            </Text>
+            <Text type="secondary" style={{ fontSize: 13 }}>Nenhuma movimentação cadastrada. Cadastre entradas e saídas para visualizar os gráficos.</Text>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={240}>
@@ -717,26 +516,17 @@ export default function Relatorios() {
               <XAxis dataKey="month" tick={{ fontSize: 12, fill: SYN_COLORS.textSecondary }} axisLine={false} tickLine={false} />
               <YAxis tickFormatter={formatCompactBRL} tick={{ fontSize: 12, fill: SYN_COLORS.textSecondary }} axisLine={false} tickLine={false} width={75} />
               <ReTooltip formatter={(v) => [formatBRL(Number(v))]} contentStyle={{ borderRadius: 8, border: '1px solid #E5E7EB' }} />
-              <Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} formatter={(v: string) => ({ entradas: 'Entradas', saidas: 'Saídas', lucro: 'Lucro' }[v] ?? v)} />
-              <Line type="monotone" dataKey="entradas" stroke={SYN_COLORS.success} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-              <Line type="monotone" dataKey="saidas" stroke={SYN_COLORS.danger} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-              <Line type="monotone" dataKey="lucro" stroke={SYN_COLORS.primary} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+              <Line type="monotone" dataKey="entradas" stroke={SYN_COLORS.success} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} name="Entradas" />
+              <Line type="monotone" dataKey="saidas" stroke={SYN_COLORS.danger} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} name="Saídas" />
+              <Line type="monotone" dataKey="lucro" stroke={SYN_COLORS.primary} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} name="Lucro" />
             </LineChart>
           </ResponsiveContainer>
         )}
       </Card>
 
       {/* Relatórios em Abas */}
-      <Divider style={{ marginBottom: 20 }}>
-        <Text type="secondary" style={{ fontSize: 13 }}>Relatórios Detalhados</Text>
-      </Divider>
-
-      <Tabs
-        type="card"
-        size="small"
-        items={tabItems}
-        style={{ marginBottom: 24 }}
-      />
+      <Divider style={{ marginBottom: 20 }}><Text type="secondary" style={{ fontSize: 13 }}>Relatórios Detalhados</Text></Divider>
+      <Tabs type="card" size="small" items={tabItems} style={{ marginBottom: 24 }} />
 
       {/* Modal de exportação */}
       <Modal
@@ -748,16 +538,9 @@ export default function Relatorios() {
         cancelButtonProps={{ style: { display: 'none' } }}
       >
         <div style={{ textAlign: 'center', padding: '24px 0' }}>
-          {exportTipo === 'PDF' ? (
-            <FilePdfOutlined style={{ fontSize: 40, color: SYN_COLORS.danger, marginBottom: 16, display: 'block' }} />
-          ) : (
-            <FileExcelOutlined style={{ fontSize: 40, color: SYN_COLORS.success, marginBottom: 16, display: 'block' }} />
-          )}
+          {exportTipo === 'PDF' ? <FilePdfOutlined style={{ fontSize: 40, color: SYN_COLORS.danger, marginBottom: 16, display: 'block' }} /> : <FileExcelOutlined style={{ fontSize: 40, color: SYN_COLORS.success, marginBottom: 16, display: 'block' }} />}
           <Title level={4} style={{ marginTop: 0 }}>Exportação em {exportTipo}</Title>
-          <Text type="secondary">
-            A função de exportação será conectada ao backend em uma próxima fase.
-            Por enquanto, os dados estão disponíveis para visualização na tela.
-          </Text>
+          <Text type="secondary">A função de exportação será conectada ao backend em uma próxima fase. Os dados estão disponíveis para visualização na tela.</Text>
         </div>
       </Modal>
     </div>

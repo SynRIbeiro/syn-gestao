@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom'
 import type { Saida, SaidaStatus } from '@/types'
 import type { DbSaida } from '@/types/database'
 import { supabase } from '@/lib/supabase'
+import { EMPRESA_ID } from '@/lib/constants'
 import { formatBRL } from '@/utils/formatters'
 import { formatDateBR, daysUntil } from '@/utils/dateHelpers'
 import { SYN_COLORS } from '@/styles/theme'
@@ -76,6 +77,7 @@ export default function ContasPagar() {
       const { data: rawData, error } = await supabase
         .from('saidas')
         .select('*, categorias!categoria_id(nome), centros_custo!centro_custo_id(nome), contas_bancarias!conta_bancaria_id(nome)')
+        .eq('empresa_id', EMPRESA_ID)
         .in('status', ['pendente', 'atrasado'])
         .order('data_vencimento', { ascending: true })
       if (error) {

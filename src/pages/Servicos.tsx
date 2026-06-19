@@ -14,6 +14,7 @@ import type { ColumnsType } from 'antd/es/table'
 import type { ServicoItem } from '@/types'
 import type { DbServico } from '@/types/database'
 import { supabase } from '@/lib/supabase'
+import { EMPRESA_ID } from '@/lib/constants'
 import { useEmpresaId } from '@/hooks/useEmpresaId'
 import { formatBRL } from '@/utils/formatters'
 import { SYN_COLORS } from '@/styles/theme'
@@ -84,6 +85,7 @@ export default function Servicos() {
       const { data: rawData, error } = await supabase
         .from('servicos')
         .select('*')
+        .eq('empresa_id', EMPRESA_ID)
         .order('nome')
       if (error) {
         message.error('Erro ao carregar serviços.')

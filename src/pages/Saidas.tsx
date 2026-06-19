@@ -14,6 +14,7 @@ import dayjs from 'dayjs'
 import type { Saida, SaidaStatus } from '@/types'
 import type { DbSaida } from '@/types/database'
 import { supabase } from '@/lib/supabase'
+import { EMPRESA_ID } from '@/lib/constants'
 import { useEmpresaId } from '@/hooks/useEmpresaId'
 import { formatBRL } from '@/utils/formatters'
 import { formatDateBR, dayjs as djsInstance } from '@/utils/dateHelpers'
@@ -114,10 +115,10 @@ export default function Saidas() {
     async function fetchAll() {
       setLoading(true)
       const [saidasRes, categoriasRes, centrosRes, contasRes] = await Promise.all([
-        supabase.from('saidas').select(SELECT_QUERY).order('data_vencimento', { ascending: false }),
-        supabase.from('categorias').select('id, nome').in('tipo', ['saida', 'ambos']).eq('ativo', true).order('nome'),
-        supabase.from('centros_custo').select('id, nome').eq('ativo', true).order('nome'),
-        supabase.from('contas_bancarias').select('id, nome').eq('ativo', true).order('nome'),
+        supabase.from('saidas').select(SELECT_QUERY).eq('empresa_id', EMPRESA_ID).order('data_vencimento', { ascending: false }),
+        supabase.from('categorias').select('id, nome').eq('empresa_id', EMPRESA_ID).in('tipo', ['saida', 'ambos']).eq('ativo', true).order('nome'),
+        supabase.from('centros_custo').select('id, nome').eq('empresa_id', EMPRESA_ID).eq('ativo', true).order('nome'),
+        supabase.from('contas_bancarias').select('id, nome').eq('empresa_id', EMPRESA_ID).eq('ativo', true).order('nome'),
       ])
 
       if (saidasRes.error) {

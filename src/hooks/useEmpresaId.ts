@@ -1,6 +1,6 @@
-export type EmpresaIdError = 'network' | 'profile_not_found' | 'empresa_id_missing' | null
+import { EMPRESA_ID } from '@/lib/constants'
 
-const EMPRESA_ID = '6ec7e12f-a267-4dd4-b53a-8c8ccbae90d7'
+export type EmpresaIdError = 'network' | 'profile_not_found' | 'empresa_id_missing' | null
 
 export function useEmpresaId() {
   return {

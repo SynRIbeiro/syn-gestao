@@ -16,6 +16,7 @@ import dayjs from 'dayjs'
 import type { ClienteItem, ClienteStatus } from '@/types'
 import type { DbCliente } from '@/types/database'
 import { supabase } from '@/lib/supabase'
+import { EMPRESA_ID } from '@/lib/constants'
 import { useEmpresaId } from '@/hooks/useEmpresaId'
 import { formatBRL } from '@/utils/formatters'
 import { formatDateBR, dayjs as djsInstance } from '@/utils/dateHelpers'
@@ -90,6 +91,7 @@ export default function Clientes() {
       const { data: rawData, error } = await supabase
         .from('clientes')
         .select('*')
+        .eq('empresa_id', EMPRESA_ID)
         .order('nome')
       if (error) {
         message.error('Erro ao carregar clientes.')

@@ -14,6 +14,7 @@ import dayjs from 'dayjs'
 import type { Entrada, EntradaStatus } from '@/types'
 import type { DbEntrada } from '@/types/database'
 import { supabase } from '@/lib/supabase'
+import { EMPRESA_ID } from '@/lib/constants'
 import { useEmpresaId } from '@/hooks/useEmpresaId'
 import { formatBRL } from '@/utils/formatters'
 import { formatDateBR, dayjs as djsInstance } from '@/utils/dateHelpers'
@@ -122,11 +123,11 @@ export default function Entradas() {
     async function fetchAll() {
       setLoading(true)
       const [entradasRes, clientesRes, servicosRes, categoriasRes, contasRes] = await Promise.all([
-        supabase.from('entradas').select(SELECT_QUERY).order('data_vencimento', { ascending: false }),
-        supabase.from('clientes').select('id, nome').eq('status', 'ativo').order('nome'),
-        supabase.from('servicos').select('id, nome').eq('ativo', true).order('nome'),
-        supabase.from('categorias').select('id, nome').in('tipo', ['entrada', 'ambos']).eq('ativo', true).order('nome'),
-        supabase.from('contas_bancarias').select('id, nome').eq('ativo', true).order('nome'),
+        supabase.from('entradas').select(SELECT_QUERY).eq('empresa_id', EMPRESA_ID).order('data_vencimento', { ascending: false }),
+        supabase.from('clientes').select('id, nome').eq('empresa_id', EMPRESA_ID).eq('status', 'ativo').order('nome'),
+        supabase.from('servicos').select('id, nome').eq('empresa_id', EMPRESA_ID).eq('ativo', true).order('nome'),
+        supabase.from('categorias').select('id, nome').eq('empresa_id', EMPRESA_ID).in('tipo', ['entrada', 'ambos']).eq('ativo', true).order('nome'),
+        supabase.from('contas_bancarias').select('id, nome').eq('empresa_id', EMPRESA_ID).eq('ativo', true).order('nome'),
       ])
 
       if (entradasRes.error) {
