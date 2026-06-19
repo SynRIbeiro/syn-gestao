@@ -72,7 +72,7 @@ function dbToCliente(row: DbCliente): ClienteItem {
 export default function Clientes() {
   const { modal, message } = App.useApp()
   const [form] = Form.useForm<ClienteFormValues>()
-  const { empresaId } = useEmpresaId()
+  const { empresaId, loading: empresaLoading, errorType: empresaError } = useEmpresaId()
 
   const [clientes, setClientes] = useState<ClienteItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -160,8 +160,20 @@ export default function Clientes() {
   }
 
   async function handleFormSubmit(values: ClienteFormValues) {
+    if (empresaLoading) {
+      message.warning('Aguarde, carregando dados da empresa...')
+      return
+    }
     if (!empresaId) {
-      message.error('Empresa não configurada. Entre em contato com o administrador.')
+      if (empresaError === 'network') {
+        message.error('Erro de conexão ao carregar o perfil. Verifique sua internet e tente novamente.')
+      } else if (empresaError === 'profile_not_found') {
+        message.error('Perfil de usuário não encontrado. Entre em contato com o administrador.')
+      } else if (empresaError === 'empresa_id_missing') {
+        message.error('Nenhuma empresa vinculada ao seu perfil. Entre em contato com o administrador.')
+      } else {
+        message.error('Não foi possível carregar os dados da empresa. Tente recarregar a página.')
+      }
       return
     }
     const dataStr = values.dataInicio.format('YYYY-MM-DD')

@@ -93,7 +93,7 @@ const SELECT_QUERY = `
 export default function Saidas() {
   const { modal, message } = App.useApp()
   const [form] = Form.useForm<SaidaFormValues>()
-  const { empresaId } = useEmpresaId()
+  const { empresaId, loading: empresaLoading, errorType: empresaError } = useEmpresaId()
 
   const [saidas, setSaidas] = useState<Saida[]>([])
   const [loading, setLoading] = useState(true)
@@ -222,8 +222,20 @@ export default function Saidas() {
   }
 
   async function handleFormSubmit(values: SaidaFormValues) {
+    if (empresaLoading) {
+      message.warning('Aguarde, carregando dados da empresa...')
+      return
+    }
     if (!empresaId) {
-      message.error('Empresa não configurada. Entre em contato com o administrador.')
+      if (empresaError === 'network') {
+        message.error('Erro de conexão ao carregar o perfil. Verifique sua internet e tente novamente.')
+      } else if (empresaError === 'profile_not_found') {
+        message.error('Perfil de usuário não encontrado. Entre em contato com o administrador.')
+      } else if (empresaError === 'empresa_id_missing') {
+        message.error('Nenhuma empresa vinculada ao seu perfil. Entre em contato com o administrador.')
+      } else {
+        message.error('Não foi possível carregar os dados da empresa. Tente recarregar a página.')
+      }
       return
     }
     const vencStr = values.vencimento.format('YYYY-MM-DD')
