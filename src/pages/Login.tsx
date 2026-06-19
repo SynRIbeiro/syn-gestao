@@ -1,16 +1,28 @@
+import { useState } from 'react'
 import { Form, Input, Button, Card, Typography, Divider, Alert } from 'antd'
 import { UserOutlined, LockOutlined, EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { SYN_COLORS } from '@/styles/theme'
+import { useAuth } from '@/hooks/useAuth'
 
 const { Title, Text, Link } = Typography
 
 export default function Login() {
   const navigate = useNavigate()
+  const { signIn } = useAuth()
+  const [submitting, setSubmitting] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  const handleSubmit = (values: { email: string; password: string }) => {
-    console.log('Login:', values)
-    navigate('/dashboard')
+  const handleSubmit = async (values: { email: string; password: string }) => {
+    setSubmitting(true)
+    setErrorMsg(null)
+    const { error } = await signIn(values.email, values.password)
+    setSubmitting(false)
+    if (error) {
+      setErrorMsg('E-mail ou senha incorretos.')
+    } else {
+      navigate('/dashboard')
+    }
   }
 
   return (
@@ -66,13 +78,14 @@ export default function Login() {
             Acesse sua conta para continuar
           </Text>
 
-          <Alert
-            message="Ambiente de demonstração"
-            description="Use qualquer e-mail e senha para acessar."
-            type="info"
-            showIcon
-            style={{ marginBottom: 24, borderRadius: 8, fontSize: 13 }}
-          />
+          {errorMsg && (
+            <Alert
+              message={errorMsg}
+              type="error"
+              showIcon
+              style={{ marginBottom: 24, borderRadius: 8, fontSize: 13 }}
+            />
+          )}
 
           <Form
             layout="vertical"
@@ -123,6 +136,7 @@ export default function Login() {
                 htmlType="submit"
                 size="large"
                 block
+                loading={submitting}
                 style={{
                   borderRadius: 8,
                   fontWeight: 600,

@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 import type { MenuProps } from 'antd'
+import { useAuth } from '@/hooks/useAuth'
 
 const { Header } = Layout
 const { Text } = Typography
@@ -57,11 +58,19 @@ interface AppHeaderProps {
 export default function AppHeader({ collapsed, onToggle }: AppHeaderProps) {
   const navigate = useNavigate()
   const location = useLocation()
+  const { user, signOut } = useAuth()
 
   const currentLabel = routeLabels[location.pathname] ?? 'Syn Gestão'
 
-  const handleUserMenu: MenuProps['onClick'] = ({ key }) => {
-    if (key === 'logout') navigate('/login')
+  const userEmail = user?.email ?? ''
+  const userInitials = userEmail.slice(0, 2).toUpperCase() || 'SY'
+  const userName = userEmail.split('@')[0] ?? 'Usuário'
+
+  const handleUserMenu: MenuProps['onClick'] = async ({ key }) => {
+    if (key === 'logout') {
+      await signOut()
+      navigate('/login')
+    }
     if (key === 'settings') navigate('/configuracoes')
     if (key === 'profile') navigate('/configuracoes')
   }
@@ -117,14 +126,14 @@ export default function AppHeader({ collapsed, onToggle }: AppHeaderProps) {
               size={32}
               style={{ background: '#7C3AED', fontSize: 13, fontWeight: 600 }}
             >
-              SY
+              {userInitials}
             </Avatar>
             <div style={{ lineHeight: 1 }}>
               <Text strong style={{ fontSize: 13, display: 'block' }}>
-                Administrador
+                {userName}
               </Text>
               <Text type="secondary" style={{ fontSize: 11 }}>
-                admin@syngestao.com.br
+                {userEmail}
               </Text>
             </div>
           </Space>
