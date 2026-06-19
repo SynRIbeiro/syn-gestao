@@ -16,6 +16,7 @@ import { dayjs } from '@/utils/dateHelpers'
 import { SYN_COLORS } from '@/styles/theme'
 import { supabase } from '@/lib/supabase'
 import { EMPRESA_ID } from '@/lib/constants'
+import { gerarCobrancaMensal } from '@/lib/billingService'
 import type { ChartDataPoint, ExpenseCategory, Transaction } from '@/types'
 
 const { Title, Text } = Typography
@@ -54,6 +55,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchDashboard() {
       setLoading(true)
+      await gerarCobrancaMensal()
 
       const now = dayjs()
       const startOfMonth = now.startOf('month').format('YYYY-MM-DD')
@@ -91,7 +93,7 @@ export default function Dashboard() {
         supabase.from('entradas').select('id, descricao, valor, status, data_vencimento, clientes!cliente_id(nome), categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).order('data_vencimento', { ascending: false }).limit(7),
         supabase.from('saidas').select('id, descricao, valor, status, data_vencimento, categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).in('status', ['pendente', 'atrasado']).order('data_vencimento', { ascending: true }).limit(6),
         supabase.from('saidas').select('valor, data_vencimento, categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).gte('data_vencimento', meses[0].inicio).lte('data_vencimento', meses[5].fim),
-        supabase.from('entradas').select('valor, data_vencimento').eq('empresa_id', EMPRESA_ID).gte('data_vencimento', meses[0].inicio).lte('data_vencimento', meses[5].fim),
+        supabase.from('entradas').select('valor, data_vencimento, status').eq('empresa_id', EMPRESA_ID).gte('data_vencimento', meses[0].inicio).lte('data_vencimento', meses[5].fim),
       ])
 
       // Saldo atual
@@ -100,8 +102,8 @@ export default function Dashboard() {
       const saidasPagas = (saidasMesRes.data ?? []).filter((s: any) => s.status === 'pago').reduce((acc, s: any) => acc + Number(s.valor), 0)
       const saldoAtual = saldoInicial + entradasRecebidas - saidasPagas
 
-      // KPIs mês atual
-      const totalEntradas = (entradasMesRes.data ?? []).reduce((s, e: any) => s + Number(e.valor), 0)
+      // KPIs mês atual — entradas: apenas recebidas; saídas: todas do mês
+      const totalEntradas = (entradasMesRes.data ?? []).filter((e: any) => e.status === 'recebido').reduce((s, e: any) => s + Number(e.valor), 0)
       const totalSaidas = (saidasMesRes.data ?? []).reduce((s, e: any) => s + Number(e.valor), 0)
       const lucroLiquido = totalEntradas - totalSaidas
 
@@ -119,7 +121,7 @@ export default function Dashboard() {
 
       // Gráfico últimos 6 meses
       const chartData: ChartDataPoint[] = meses.map(m => {
-        const ent = (entradas6MesesRes.data ?? []).filter((e: any) => e.data_vencimento >= m.inicio && e.data_vencimento <= m.fim)
+        const ent = (entradas6MesesRes.data ?? []).filter((e: any) => e.data_vencimento >= m.inicio && e.data_vencimento <= m.fim && e.status === 'recebido')
         const sai = (saidas6MesesRes.data ?? []).filter((s: any) => s.data_vencimento >= m.inicio && s.data_vencimento <= m.fim)
         const entVal = ent.reduce((s, e: any) => s + Number(e.valor), 0)
         const saiVal = sai.reduce((s, e: any) => s + Number(e.valor), 0)

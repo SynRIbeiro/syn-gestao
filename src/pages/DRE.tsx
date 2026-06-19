@@ -86,7 +86,7 @@ export default function DRE() {
     async function fetchData() {
       setLoading(true)
       const [entradasRes, saidasRes] = await Promise.all([
-        supabase.from('entradas').select('valor, data_vencimento').eq('empresa_id', EMPRESA_ID).order('data_vencimento'),
+        supabase.from('entradas').select('valor, data_vencimento').eq('empresa_id', EMPRESA_ID).eq('status', 'recebido').order('data_vencimento'),
         supabase.from('saidas').select('valor, data_vencimento, categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).order('data_vencimento'),
       ])
       setEntradas((entradasRes.data ?? []) as unknown as EntradaRow[])

@@ -17,6 +17,7 @@ import type { ClienteItem, ClienteStatus } from '@/types'
 import type { DbCliente } from '@/types/database'
 import { supabase } from '@/lib/supabase'
 import { EMPRESA_ID } from '@/lib/constants'
+import { gerarCobrancaMensal } from '@/lib/billingService'
 import { useEmpresaId } from '@/hooks/useEmpresaId'
 import { formatBRL } from '@/utils/formatters'
 import { formatDateBR, dayjs as djsInstance } from '@/utils/dateHelpers'
@@ -203,8 +204,12 @@ export default function Clientes() {
         message.error('Erro ao cadastrar cliente.')
         return
       }
-      setClientes(prev => [dbToCliente(rawIns as unknown as DbCliente), ...prev])
+      const novoCliente = dbToCliente(rawIns as unknown as DbCliente)
+      setClientes(prev => [novoCliente, ...prev])
       message.success('Cliente cadastrado com sucesso!')
+      if (values.status === 'ativo' && (values.valorMensal ?? 0) > 0) {
+        gerarCobrancaMensal(novoCliente.id)
+      }
     } else if (selected) {
       const { data: rawUpd, error } = await supabase
         .from('clientes')

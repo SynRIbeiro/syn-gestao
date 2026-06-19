@@ -119,7 +119,8 @@ export default function ContasReceber() {
   }, [abertas, search, filterStatus, filterCliente])
 
   async function handleMarkReceived(id: string) {
-    const { error } = await supabase.from('entradas').update({ status: 'recebido' } as Record<string, unknown>).eq('id', id)
+    const today = new Date().toISOString().split('T')[0]
+    const { error } = await supabase.from('entradas').update({ status: 'recebido', data_recebimento: today } as Record<string, unknown>).eq('id', id)
     if (error) {
       message.error('Erro ao atualizar status.')
       return
