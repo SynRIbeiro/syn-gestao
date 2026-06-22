@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import {
-  Table, Button, Space, Tag, Typography, Row, Col, Card, Input, Select, App, Spin,
+  Table, Button, Space, Tag, Typography, Row, Col, Card, Input, Select, App, Spin, Switch,
 } from 'antd'
 import {
   CheckCircleOutlined, SearchOutlined, WalletOutlined,
-  ClockCircleOutlined, ExclamationCircleOutlined, PlusOutlined,
+  ClockCircleOutlined, ExclamationCircleOutlined, PlusOutlined, UndoOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useNavigate } from 'react-router-dom'
@@ -13,6 +13,7 @@ import type { Entrada, EntradaStatus } from '@/types'
 import type { DbEntrada } from '@/types/database'
 import { supabase } from '@/lib/supabase'
 import { EMPRESA_ID } from '@/lib/constants'
+import { isEntradaPrevista } from '@/lib/statusHelpers'
 import { formatBRL } from '@/utils/formatters'
 import { formatDateBR, daysUntil } from '@/utils/dateHelpers'
 import { SYN_COLORS } from '@/styles/theme'
@@ -67,33 +68,41 @@ export default function ContasReceber() {
   const { message } = App.useApp()
   const navigate = useNavigate()
 
-  const [abertas, setAbertas] = useState<Entrada[]>([])
+  const [entradas, setEntradas] = useState<Entrada[]>([])
   const [loading, setLoading] = useState(true)
+  const [showHistorico, setShowHistorico] = useState(false)
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState<EntradaStatus | ''>('')
   const [filterCliente, setFilterCliente] = useState('')
+  const [filterServico, setFilterServico] = useState('')
 
-  useEffect(() => {
-    async function fetchAbertas() {
-      setLoading(true)
-      const { data: rawData, error } = await supabase
-        .from('entradas')
-        .select('*, clientes!cliente_id(nome), servicos!servico_id(nome), categorias!categoria_id(nome), contas_bancarias!conta_bancaria_id(nome)')
-        .eq('empresa_id', EMPRESA_ID)
-        .in('status', ['pendente', 'atrasado'])
-        .order('data_vencimento', { ascending: true })
-      if (error) {
-        message.error('Erro ao carregar contas a receber.')
-      } else {
-        setAbertas(((rawData ?? []) as unknown as EntradaRow[]).map(dbToEntrada))
-      }
-      setLoading(false)
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    let query = supabase
+      .from('entradas')
+      .select('*, clientes!cliente_id(nome), servicos!servico_id(nome), categorias!categoria_id(nome), contas_bancarias!conta_bancaria_id(nome)')
+      .eq('empresa_id', EMPRESA_ID)
+      .order('data_vencimento', { ascending: true })
+
+    if (!showHistorico) {
+      query = query.in('status', ['pendente', 'atrasado'])
     }
-    fetchAbertas()
+
+    const { data: rawData, error } = await query
+    if (error) {
+      console.error('ContasReceber fetch error:', error)
+      message.error('Erro ao carregar contas a receber.')
+    } else {
+      setEntradas(((rawData ?? []) as unknown as EntradaRow[]).map(dbToEntrada))
+    }
+    setLoading(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [showHistorico])
+
+  useEffect(() => { fetchData() }, [fetchData])
 
   const totals = useMemo(() => {
+    const abertas = entradas.filter(e => isEntradaPrevista(e.status))
     const total = abertas.reduce((s, e) => s + e.valor, 0)
     const atrasado = abertas.filter(e => e.status === 'atrasado').reduce((s, e) => s + e.valor, 0)
     const proxVenc = abertas.filter(e => {
@@ -101,33 +110,68 @@ export default function ContasReceber() {
       return d >= 0 && d <= 7
     }).reduce((s, e) => s + e.valor, 0)
     return { total, atrasado, proxVenc }
-  }, [abertas])
+  }, [entradas])
 
   const clientes = useMemo(
-    () => [...new Set(abertas.map(e => e.clienteNome).filter(Boolean))].sort(),
-    [abertas],
+    () => [...new Set(entradas.map(e => e.clienteNome).filter(Boolean))].sort(),
+    [entradas],
+  )
+
+  const servicos = useMemo(
+    () => [...new Set(entradas.map(e => e.servicoNome).filter(Boolean))].sort(),
+    [entradas],
   )
 
   const filtered = useMemo(() => {
-    return abertas.filter(e => {
+    return entradas.filter(e => {
       const q = search.toLowerCase()
       if (search && !e.descricao.toLowerCase().includes(q) && !e.clienteNome.toLowerCase().includes(q)) return false
       if (filterStatus && e.status !== filterStatus) return false
       if (filterCliente && e.clienteNome !== filterCliente) return false
+      if (filterServico && e.servicoNome !== filterServico) return false
       return true
     }).sort((a, b) => a.data.localeCompare(b.data))
-  }, [abertas, search, filterStatus, filterCliente])
+  }, [entradas, search, filterStatus, filterCliente, filterServico])
 
   async function handleMarkReceived(id: string) {
     const today = new Date().toISOString().split('T')[0]
-    const { error } = await supabase.from('entradas').update({ status: 'recebido', data_recebimento: today } as Record<string, unknown>).eq('id', id)
+    const { error } = await supabase
+      .from('entradas')
+      .update({ status: 'recebido', data_recebimento: today } as Record<string, unknown>)
+      .eq('id', id)
     if (error) {
+      console.error('handleMarkReceived error:', error)
       message.error('Erro ao atualizar status.')
       return
     }
-    setAbertas(prev => prev.filter(e => e.id !== id))
+    await fetchData()
     message.success('Conta marcada como recebida.')
   }
+
+  async function handleUnmarkReceived(id: string) {
+    const { error } = await supabase
+      .from('entradas')
+      .update({ status: 'pendente', data_recebimento: null } as Record<string, unknown>)
+      .eq('id', id)
+    if (error) {
+      console.error('handleUnmarkReceived error:', error)
+      message.error('Erro ao desfazer recebimento.')
+      return
+    }
+    await fetchData()
+    message.success('Recebimento desfeito. Conta volta para pendente.')
+  }
+
+  const statusOptions: { value: EntradaStatus; label: string }[] = showHistorico
+    ? [
+        { value: 'recebido', label: 'Recebido' },
+        { value: 'pendente', label: 'Pendente' },
+        { value: 'atrasado', label: 'Atrasado' },
+      ]
+    : [
+        { value: 'pendente', label: 'Pendente' },
+        { value: 'atrasado', label: 'Atrasado' },
+      ]
 
   const columns: ColumnsType<Entrada> = [
     {
@@ -135,13 +179,21 @@ export default function ContasReceber() {
       dataIndex: 'clienteNome',
       key: 'clienteNome',
       ellipsis: true,
-      width: 200,
+      width: 180,
     },
     {
       title: 'Descrição',
       dataIndex: 'descricao',
       key: 'descricao',
       ellipsis: true,
+    },
+    {
+      title: 'Serviço',
+      dataIndex: 'servicoNome',
+      key: 'servicoNome',
+      width: 160,
+      ellipsis: true,
+      render: (v: string) => v || '—',
     },
     {
       title: 'Valor',
@@ -158,7 +210,7 @@ export default function ContasReceber() {
       title: 'Vencimento',
       dataIndex: 'data',
       key: 'data',
-      width: 120,
+      width: 110,
       render: (v: string) => formatDateBR(v),
       sorter: (a, b) => a.data.localeCompare(b.data),
     },
@@ -167,13 +219,12 @@ export default function ContasReceber() {
       key: 'dias',
       width: 160,
       render: (_, record) => <DiasBadge data={record.data} status={record.status} />,
-      sorter: (a, b) => daysUntil(a.data) - daysUntil(b.data),
     },
     {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
-      width: 120,
+      width: 110,
       render: (s: EntradaStatus) => {
         if (s === 'recebido') return <Tag icon={<CheckCircleOutlined />} color="success">Recebido</Tag>
         if (s === 'pendente') return <Tag icon={<ClockCircleOutlined />} color="warning">Pendente</Tag>
@@ -185,25 +236,49 @@ export default function ContasReceber() {
       key: 'acoes',
       width: 140,
       fixed: 'right',
-      render: (_, record) => (
-        <Button
-          size="small"
-          type="primary"
-          ghost
-          icon={<CheckCircleOutlined />}
-          onClick={() => handleMarkReceived(record.id)}
-        >
-          Recebido
-        </Button>
-      ),
+      render: (_, record) => {
+        if (record.status === 'recebido') {
+          return (
+            <Button
+              size="small"
+              icon={<UndoOutlined />}
+              onClick={() => handleUnmarkReceived(record.id)}
+            >
+              Desfazer
+            </Button>
+          )
+        }
+        return (
+          <Button
+            size="small"
+            type="primary"
+            ghost
+            icon={<CheckCircleOutlined />}
+            onClick={() => handleMarkReceived(record.id)}
+          >
+            Recebido
+          </Button>
+        )
+      },
     },
   ]
 
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto' }}>
-      <div style={{ marginBottom: 24 }}>
-        <Title level={4} style={{ margin: 0, fontWeight: 700 }}>Contas a Receber</Title>
-        <Text type="secondary" style={{ fontSize: 13 }}>Gestão de cobranças e valores pendentes de clientes</Text>
+      <div style={{ marginBottom: 24, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <Title level={4} style={{ margin: 0, fontWeight: 700 }}>Contas a Receber</Title>
+          <Text type="secondary" style={{ fontSize: 13 }}>Gestão de cobranças e valores pendentes de clientes</Text>
+        </div>
+        <Space>
+          <Text type="secondary" style={{ fontSize: 13 }}>Histórico</Text>
+          <Switch
+            checked={showHistorico}
+            onChange={v => { setShowHistorico(v); setFilterStatus('') }}
+            checkedChildren="Sim"
+            unCheckedChildren="Não"
+          />
+        </Space>
       </div>
 
       {loading ? (
@@ -211,22 +286,9 @@ export default function ContasReceber() {
           <Spin size="large" />
           <Text type="secondary">Carregando contas a receber...</Text>
         </div>
-      ) : abertas.length === 0 ? (
-        <Card style={{ borderRadius: 12, textAlign: 'center' }} styles={{ body: { padding: '72px 24px' } }}>
-          <WalletOutlined style={{ fontSize: 56, color: '#D1D5DB', marginBottom: 20 }} />
-          <Title level={5} style={{ margin: '0 0 8px', color: '#6B7280', fontWeight: 600 }}>
-            Nenhuma conta a receber em aberto
-          </Title>
-          <Text type="secondary" style={{ fontSize: 14, display: 'block', marginBottom: 28 }}>
-            Todas as entradas estão quitadas ou ainda não há receitas registradas.
-          </Text>
-          <Button type="primary" icon={<PlusOutlined />} size="large" onClick={() => navigate('/entradas')}>
-            Registrar Entrada
-          </Button>
-        </Card>
       ) : (
         <>
-          {/* Cards resumo */}
+          {/* Cards resumo — sempre baseados em pendentes/atrasadas */}
           <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
             <Col xs={24} sm={8}>
               <Card styles={{ body: { padding: '16px 20px' } }} style={{ borderRadius: 12, borderLeft: `4px solid ${SYN_COLORS.info}` }}>
@@ -288,13 +350,10 @@ export default function ContasReceber() {
                   allowClear
                   value={filterStatus || undefined}
                   onChange={v => setFilterStatus(v ?? '')}
-                  options={[
-                    { value: 'pendente', label: 'Pendente' },
-                    { value: 'atrasado', label: 'Atrasado' },
-                  ]}
+                  options={statusOptions}
                 />
               </Col>
-              <Col xs={12} sm={6} md={5}>
+              <Col xs={12} sm={6} md={4}>
                 <Select
                   style={{ width: '100%' }}
                   placeholder="Cliente"
@@ -305,21 +364,57 @@ export default function ContasReceber() {
                   options={clientes.map(c => ({ value: c, label: c }))}
                 />
               </Col>
+              <Col xs={12} sm={6} md={4}>
+                <Select
+                  style={{ width: '100%' }}
+                  placeholder="Serviço"
+                  allowClear
+                  showSearch
+                  value={filterServico || undefined}
+                  onChange={v => setFilterServico(v ?? '')}
+                  options={servicos.map(s => ({ value: s, label: s }))}
+                />
+              </Col>
+              {entradas.length === 0 && !showHistorico && (
+                <Col xs={12} sm={6} md={4} style={{ marginLeft: 'auto' }}>
+                  <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/entradas')} style={{ width: '100%' }}>
+                    Registrar Entrada
+                  </Button>
+                </Col>
+              )}
             </Row>
           </Card>
 
-          {/* Tabela */}
-          <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
-            <Table
-              dataSource={filtered}
-              columns={columns}
-              rowKey="id"
-              scroll={{ x: 900 }}
-              rowClassName={(record) => record.status === 'atrasado' ? 'row-atrasado' : ''}
-              pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `${t} registros`, pageSizeOptions: ['10', '20', '50'] }}
-              locale={{ emptyText: <div style={{ padding: 40, textAlign: 'center' }}><WalletOutlined style={{ fontSize: 32, color: '#D1D5DB', marginBottom: 8 }} /><br /><Text type="secondary">Nenhuma conta encontrada com os filtros aplicados</Text></div> }}
-            />
-          </Card>
+          {filtered.length === 0 ? (
+            <Card style={{ borderRadius: 12, textAlign: 'center' }} styles={{ body: { padding: '72px 24px' } }}>
+              <WalletOutlined style={{ fontSize: 56, color: '#D1D5DB', marginBottom: 20 }} />
+              <Title level={5} style={{ margin: '0 0 8px', color: '#6B7280', fontWeight: 600 }}>
+                {showHistorico ? 'Nenhum lançamento encontrado' : 'Nenhuma conta a receber em aberto'}
+              </Title>
+              <Text type="secondary" style={{ fontSize: 14, display: 'block', marginBottom: 28 }}>
+                {showHistorico
+                  ? 'Ajuste os filtros ou alterne entre modos.'
+                  : 'Todas as entradas estão quitadas ou ainda não há receitas registradas.'}
+              </Text>
+              {!showHistorico && (
+                <Button type="primary" icon={<PlusOutlined />} size="large" onClick={() => navigate('/entradas')}>
+                  Registrar Entrada
+                </Button>
+              )}
+            </Card>
+          ) : (
+            <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
+              <Table
+                dataSource={filtered}
+                columns={columns}
+                rowKey="id"
+                scroll={{ x: 1000 }}
+                rowClassName={(record) => record.status === 'atrasado' ? 'row-atrasado' : ''}
+                pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `${t} registros`, pageSizeOptions: ['10', '20', '50'] }}
+                locale={{ emptyText: <div style={{ padding: 40, textAlign: 'center' }}><WalletOutlined style={{ fontSize: 32, color: '#D1D5DB', marginBottom: 8 }} /><br /><Text type="secondary">Nenhuma conta encontrada com os filtros aplicados</Text></div> }}
+              />
+            </Card>
+          )}
         </>
       )}
     </div>

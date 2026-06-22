@@ -1,15 +1,16 @@
 import { useState, useMemo, useEffect } from 'react'
 import {
-  Table, Button, Modal, Form, Input, InputNumber, Select, Switch,
+  Table, Button, Modal, Form, Input, InputNumber, Select, Switch, DatePicker,
   Space, Tag, Typography, Row, Col, Card, Drawer, Descriptions,
   Progress, App, Spin,
 } from 'antd'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined,
   SearchOutlined, AppstoreOutlined, CheckCircleOutlined,
-  CloseCircleOutlined, RiseOutlined, SyncOutlined,
+  CloseCircleOutlined, RiseOutlined, SyncOutlined, ShoppingCartOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import dayjs from 'dayjs'
 
 import type { ServicoItem } from '@/types'
 import type { DbServico } from '@/types/database'
@@ -32,6 +33,14 @@ interface ServicoFormValues {
   custoEstimado: number
   recorrente: boolean
   status: 'ativo' | 'inativo'
+}
+
+interface VendaFormValues {
+  clienteId?: string
+  valor: number
+  dataVencimento: dayjs.Dayjs
+  status: 'pendente' | 'recebido'
+  dataRecebimento?: dayjs.Dayjs
 }
 
 const CATEGORIAS = ['Consultoria', 'Desenvolvimento', 'Suporte', 'Treinamento', 'Outros']
@@ -67,6 +76,7 @@ function dbToServico(row: DbServico): ServicoItem {
 export default function Servicos() {
   const { modal, message } = App.useApp()
   const [form] = Form.useForm<ServicoFormValues>()
+  const [vendaForm] = Form.useForm<VendaFormValues>()
   const { empresaId, loading: empresaLoading, errorType: empresaError } = useEmpresaId()
 
   const [servicos, setServicos] = useState<ServicoItem[]>([])
@@ -74,6 +84,11 @@ export default function Servicos() {
   const [modalOpen, setModalOpen] = useState(false)
   const [modalMode, setModalMode] = useState<ModalMode>('create')
   const [selected, setSelected] = useState<ServicoItem | null>(null)
+
+  const [vendaOpen, setVendaOpen] = useState(false)
+  const [vendaServico, setVendaServico] = useState<ServicoItem | null>(null)
+  const [vendaLoading, setVendaLoading] = useState(false)
+  const [clientesList, setClientesList] = useState<{ id: string; nome: string }[]>([])
 
   const [search, setSearch] = useState('')
   const [filterCategoria, setFilterCategoria] = useState('')
@@ -88,6 +103,7 @@ export default function Servicos() {
         .eq('empresa_id', EMPRESA_ID)
         .order('nome')
       if (error) {
+        console.error('fetchServicos error:', error)
         message.error('Erro ao carregar serviços.')
       } else {
         setServicos(((rawData ?? []) as unknown as DbServico[]).map(dbToServico))
@@ -136,6 +152,25 @@ export default function Servicos() {
     setModalMode('view')
     setSelected(record)
     setModalOpen(true)
+  }
+
+  async function openVenda(record: ServicoItem) {
+    setVendaServico(record)
+    vendaForm.resetFields()
+    vendaForm.setFieldsValue({
+      valor: record.valorVenda,
+      dataVencimento: dayjs(),
+      status: 'recebido',
+      dataRecebimento: dayjs(),
+    })
+    const { data: cData } = await supabase
+      .from('clientes')
+      .select('id, nome')
+      .eq('empresa_id', EMPRESA_ID)
+      .eq('status', 'ativo')
+      .order('nome')
+    setClientesList((cData ?? []) as { id: string; nome: string }[])
+    setVendaOpen(true)
   }
 
   function handleDelete(id: string) {
@@ -224,6 +259,38 @@ export default function Servicos() {
     form.resetFields()
   }
 
+  async function handleVendaSubmit(values: VendaFormValues) {
+    if (!vendaServico) return
+    setVendaLoading(true)
+    const dataVencStr = values.dataVencimento.format('YYYY-MM-DD')
+    const dataRecStr = values.status === 'recebido' && values.dataRecebimento
+      ? values.dataRecebimento.format('YYYY-MM-DD')
+      : null
+
+    const { error } = await supabase.from('entradas').insert({
+      empresa_id: EMPRESA_ID,
+      servico_id: vendaServico.id,
+      cliente_id: values.clienteId ?? null,
+      descricao: `Venda do serviço ${vendaServico.nome}`,
+      valor: values.valor,
+      data_vencimento: dataVencStr,
+      data_recebimento: dataRecStr,
+      status: values.status,
+      recorrente: vendaServico.recorrente,
+      periodicidade: vendaServico.recorrente ? 'mensal' : null,
+    } as any)
+
+    setVendaLoading(false)
+    if (error) {
+      console.error('handleVendaSubmit error:', error)
+      message.error('Erro ao registrar venda.')
+      return
+    }
+    setVendaOpen(false)
+    vendaForm.resetFields()
+    message.success('Venda registrada com sucesso!')
+  }
+
   const columns: ColumnsType<ServicoItem> = [
     {
       title: 'Nome',
@@ -284,12 +351,15 @@ export default function Servicos() {
     {
       title: 'Ações',
       key: 'acoes',
-      width: 110,
+      width: 160,
       fixed: 'right',
       render: (_, record) => (
         <Space size={4}>
           <Button size="small" type="text" icon={<EyeOutlined />} onClick={() => openView(record)} title="Visualizar" />
           <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEdit(record)} title="Editar" />
+          <Button size="small" type="primary" icon={<ShoppingCartOutlined />} onClick={() => openVenda(record)} title="Registrar Venda" style={{ fontSize: 11 }}>
+            Venda
+          </Button>
           <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} title="Excluir" />
         </Space>
       ),
@@ -406,7 +476,7 @@ export default function Servicos() {
               dataSource={filtered}
               columns={columns}
               rowKey="id"
-              scroll={{ x: 1050 }}
+              scroll={{ x: 1150 }}
               pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `${t} serviços`, pageSizeOptions: ['10', '20', '50'] }}
               locale={{ emptyText: <div style={{ padding: 40, textAlign: 'center' }}><AppstoreOutlined style={{ fontSize: 32, color: '#D1D5DB', marginBottom: 8 }} /><br /><Text type="secondary">Nenhum serviço encontrado com os filtros aplicados</Text></div> }}
             />
@@ -422,9 +492,10 @@ export default function Servicos() {
           onClose={() => setModalOpen(false)}
           width={480}
           extra={
-            <Button type="primary" onClick={() => { setModalOpen(false); openEdit(selected) }}>
-              Editar
-            </Button>
+            <Space>
+              <Button onClick={() => { setModalOpen(false); openVenda(selected) }} icon={<ShoppingCartOutlined />}>Registrar Venda</Button>
+              <Button type="primary" onClick={() => { setModalOpen(false); openEdit(selected) }}>Editar</Button>
+            </Space>
           }
         >
           <Descriptions column={1} bordered size="small" labelStyle={{ fontWeight: 600, width: 150 }}>
@@ -518,7 +589,6 @@ export default function Servicos() {
               <Switch checkedChildren="Sim" unCheckedChildren="Não" />
             </Form.Item>
 
-            {/* Preview margem em tempo real */}
             <Form.Item shouldUpdate={(prev, curr) => prev.valorVenda !== curr.valorVenda || prev.custoEstimado !== curr.custoEstimado}>
               {({ getFieldValue }) => {
                 const venda = getFieldValue('valorVenda') || 0
@@ -539,6 +609,58 @@ export default function Servicos() {
           </Form>
         </Modal>
       )}
+
+      {/* Modal Registrar Venda */}
+      <Modal
+        title={<Space><ShoppingCartOutlined style={{ color: SYN_COLORS.success }} /><span>Registrar Venda — {vendaServico?.nome}</span></Space>}
+        open={vendaOpen}
+        onCancel={() => { setVendaOpen(false); vendaForm.resetFields() }}
+        onOk={() => vendaForm.submit()}
+        okText="Registrar Venda"
+        cancelText="Cancelar"
+        confirmLoading={vendaLoading}
+        width={520}
+        destroyOnHidden
+      >
+        <Form form={vendaForm} layout="vertical" onFinish={handleVendaSubmit} style={{ marginTop: 16 }}>
+          <Form.Item name="clienteId" label="Cliente (opcional)">
+            <Select
+              allowClear
+              showSearch
+              placeholder="Selecione o cliente"
+              options={clientesList.map(c => ({ value: c.id, label: c.nome }))}
+              filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+            />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="valor" label="Valor (R$)" rules={[{ required: true, message: 'Informe o valor' }]}>
+                <InputNumber style={{ width: '100%' }} min={0} step={0.01} precision={2} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="dataVencimento" label="Data de Vencimento" rules={[{ required: true, message: 'Informe a data' }]}>
+                <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="status" label="Status" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'pendente', label: 'Pendente' },
+                { value: 'recebido', label: 'Recebido' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item shouldUpdate={(prev, curr) => prev.status !== curr.status}>
+            {({ getFieldValue }) => getFieldValue('status') === 'recebido' ? (
+              <Form.Item name="dataRecebimento" label="Data de Recebimento" rules={[{ required: true, message: 'Informe a data de recebimento' }]}>
+                <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
+              </Form.Item>
+            ) : null}
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   )
 }

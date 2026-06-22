@@ -25,7 +25,7 @@ const { RangePicker } = DatePicker
 const DESP_CORES = ['#7C3AED', '#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#6B7280']
 
 interface EntradaRow {
-  id: string; data: string; descricao: string; cliente: string
+  id: string; data: string; dataRecebimento: string; descricao: string; cliente: string
   servico: string; categoria: string; valor: number; status: EntradaStatus; formaPagamento: string
 }
 
@@ -58,7 +58,7 @@ export default function Relatorios() {
     async function fetchAll() {
       setLoading(true)
       const [entradasRes, saidasRes, servicosRes] = await Promise.all([
-        supabase.from('entradas').select('id, descricao, valor, status, data_vencimento, forma_pagamento, clientes!cliente_id(nome), servicos!servico_id(nome), categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).order('data_vencimento', { ascending: false }),
+        supabase.from('entradas').select('id, descricao, valor, status, data_vencimento, data_recebimento, forma_pagamento, clientes!cliente_id(nome), servicos!servico_id(nome), categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).order('data_vencimento', { ascending: false }),
         supabase.from('saidas').select('id, descricao, valor, status, data_vencimento, fornecedor, categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).order('data_vencimento', { ascending: false }),
         supabase.from('servicos').select('id, nome, categoria, valor_venda, custo_estimado').eq('empresa_id', EMPRESA_ID).eq('ativo', true),
       ])
@@ -66,6 +66,7 @@ export default function Relatorios() {
       setEntradas(((entradasRes.data ?? []) as any[]).map(e => ({
         id: e.id,
         data: e.data_vencimento ?? '',
+        dataRecebimento: e.data_recebimento ?? '',
         descricao: e.descricao,
         cliente: (e.clientes as any)?.nome ?? '',
         servico: (e.servicos as any)?.nome ?? '',
@@ -176,8 +177,10 @@ export default function Relatorios() {
       const inicio = m.startOf('month').format('YYYY-MM-DD')
       const fim = m.endOf('month').format('YYYY-MM-DD')
       const label = m.locale('pt-br').format('MMM/YY').replace(/^\w/, c => c.toUpperCase())
-      const entVal = entradas.filter(e => e.data >= inicio && e.data <= fim).reduce((s, e) => s + e.valor, 0)
-      const saiVal = saidas.filter(s => s.vencimento >= inicio && s.vencimento <= fim).reduce((s, e) => s + e.valor, 0)
+      const entVal = entradas
+        .filter(e => e.status === 'recebido' && (e.dataRecebimento || e.data) >= inicio && (e.dataRecebimento || e.data) <= fim)
+        .reduce((s, e) => s + e.valor, 0)
+      const saiVal = saidas.filter(s => s.status === 'pago' && s.vencimento >= inicio && s.vencimento <= fim).reduce((s, e) => s + e.valor, 0)
       return { month: label, entradas: entVal, saidas: saiVal, lucro: entVal - saiVal }
     })
   }, [entradas, saidas])

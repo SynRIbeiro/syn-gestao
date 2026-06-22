@@ -74,6 +74,8 @@ export default function Dashboard() {
         contasBancarRes,
         entradasMesRes,
         saidasMesRes,
+        entradasRecebTotalRes,
+        saidasPagasTotalRes,
         contasReceberRes,
         contasPagarRes,
         clientesAtivoRes,
@@ -86,25 +88,31 @@ export default function Dashboard() {
         supabase.from('contas_bancarias').select('saldo_inicial').eq('empresa_id', EMPRESA_ID).eq('ativo', true),
         supabase.from('entradas').select('valor, status').eq('empresa_id', EMPRESA_ID).gte('data_vencimento', startOfMonth).lte('data_vencimento', endOfMonth),
         supabase.from('saidas').select('valor, status').eq('empresa_id', EMPRESA_ID).gte('data_vencimento', startOfMonth).lte('data_vencimento', endOfMonth),
+        supabase.from('entradas').select('valor').eq('empresa_id', EMPRESA_ID).eq('status', 'recebido'),
+        supabase.from('saidas').select('valor').eq('empresa_id', EMPRESA_ID).eq('status', 'pago'),
         supabase.from('entradas').select('valor').eq('empresa_id', EMPRESA_ID).in('status', ['pendente', 'atrasado']),
         supabase.from('saidas').select('valor').eq('empresa_id', EMPRESA_ID).in('status', ['pendente', 'atrasado']),
         supabase.from('clientes').select('valor_mensal').eq('empresa_id', EMPRESA_ID).eq('status', 'ativo'),
         supabase.from('investimentos').select('valor_investido, receita_gerada').eq('empresa_id', EMPRESA_ID),
-        supabase.from('entradas').select('id, descricao, valor, status, data_vencimento, clientes!cliente_id(nome), categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).order('data_vencimento', { ascending: false }).limit(7),
+        supabase.from('entradas').select('id, descricao, valor, status, data_vencimento, data_recebimento, clientes!cliente_id(nome), categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).order('data_recebimento', { ascending: false }).order('data_vencimento', { ascending: false }).limit(7),
         supabase.from('saidas').select('id, descricao, valor, status, data_vencimento, categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).in('status', ['pendente', 'atrasado']).order('data_vencimento', { ascending: true }).limit(6),
         supabase.from('saidas').select('valor, data_vencimento, categorias!categoria_id(nome)').eq('empresa_id', EMPRESA_ID).gte('data_vencimento', meses[0].inicio).lte('data_vencimento', meses[5].fim),
-        supabase.from('entradas').select('valor, data_vencimento, status').eq('empresa_id', EMPRESA_ID).gte('data_vencimento', meses[0].inicio).lte('data_vencimento', meses[5].fim),
+        supabase.from('entradas').select('valor, data_recebimento').eq('empresa_id', EMPRESA_ID).eq('status', 'recebido').gte('data_recebimento', meses[0].inicio).lte('data_recebimento', meses[5].fim),
       ])
 
-      // Saldo atual
-      const saldoInicial = (contasBancarRes.data ?? []).reduce((s, c: any) => s + Number(c.saldo_inicial ?? 0), 0)
-      const entradasRecebidas = (entradasMesRes.data ?? []).filter((e: any) => e.status === 'recebido').reduce((s, e: any) => s + Number(e.valor), 0)
-      const saidasPagas = (saidasMesRes.data ?? []).filter((s: any) => s.status === 'pago').reduce((acc, s: any) => acc + Number(s.valor), 0)
-      const saldoAtual = saldoInicial + entradasRecebidas - saidasPagas
+      if (contasBancarRes.error) console.error('contasBancarias:', contasBancarRes.error)
+      if (entradasRecebTotalRes.error) console.error('entradasRecebTotal:', entradasRecebTotalRes.error)
+      if (saidasPagasTotalRes.error) console.error('saidasPagasTotal:', saidasPagasTotalRes.error)
 
-      // KPIs mês atual — entradas: apenas recebidas; saídas: todas do mês
+      // Saldo atual — cumulativo (todo o histórico)
+      const saldoInicial = (contasBancarRes.data ?? []).reduce((s, c: any) => s + Number(c.saldo_inicial ?? 0), 0)
+      const entradasRecebTotal = (entradasRecebTotalRes.data ?? []).reduce((s, e: any) => s + Number(e.valor), 0)
+      const saidasPagasTotal = (saidasPagasTotalRes.data ?? []).reduce((s, e: any) => s + Number(e.valor), 0)
+      const saldoAtual = saldoInicial + entradasRecebTotal - saidasPagasTotal
+
+      // KPIs mês atual — apenas recebidas/pagas
       const totalEntradas = (entradasMesRes.data ?? []).filter((e: any) => e.status === 'recebido').reduce((s, e: any) => s + Number(e.valor), 0)
-      const totalSaidas = (saidasMesRes.data ?? []).reduce((s, e: any) => s + Number(e.valor), 0)
+      const totalSaidas = (saidasMesRes.data ?? []).filter((s: any) => s.status === 'pago').reduce((s, e: any) => s + Number(e.valor), 0)
       const lucroLiquido = totalEntradas - totalSaidas
 
       // Contas a receber/pagar
@@ -119,9 +127,9 @@ export default function Dashboard() {
       const totalReceitaGerada = (investimentosRes.data ?? []).reduce((s, i: any) => s + Number(i.receita_gerada ?? 0), 0)
       const roi = totalInvestido > 0 ? ((totalReceitaGerada - totalInvestido) / totalInvestido) * 100 : 0
 
-      // Gráfico últimos 6 meses
+      // Gráfico últimos 6 meses — entradas por data_recebimento, saídas por data_vencimento
       const chartData: ChartDataPoint[] = meses.map(m => {
-        const ent = (entradas6MesesRes.data ?? []).filter((e: any) => e.data_vencimento >= m.inicio && e.data_vencimento <= m.fim && e.status === 'recebido')
+        const ent = (entradas6MesesRes.data ?? []).filter((e: any) => e.data_recebimento >= m.inicio && e.data_recebimento <= m.fim)
         const sai = (saidas6MesesRes.data ?? []).filter((s: any) => s.data_vencimento >= m.inicio && s.data_vencimento <= m.fim)
         const entVal = ent.reduce((s, e: any) => s + Number(e.valor), 0)
         const saiVal = sai.reduce((s, e: any) => s + Number(e.valor), 0)
@@ -139,13 +147,13 @@ export default function Dashboard() {
         .sort((a, b) => b.value - a.value)
         .slice(0, 6)
 
-      // Movimentações recentes (entradas)
+      // Movimentações recentes (entradas) — usa data_recebimento para recebidas
       const recentTransactions: Transaction[] = (entradasRecentesRes.data ?? []).map((e: any) => ({
         id: e.id,
         description: e.descricao,
         client: (e.clientes as any)?.nome,
         category: (e.categorias as any)?.nome ?? '—',
-        date: e.data_vencimento ?? '',
+        date: (e.status === 'recebido' ? e.data_recebimento : e.data_vencimento) ?? '',
         amount: Number(e.valor),
         status: e.status === 'recebido' ? 'pago' : e.status === 'atrasado' ? 'vencido' : 'pendente',
         type: 'entrada' as const,
